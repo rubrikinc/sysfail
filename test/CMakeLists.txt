@@ -9,6 +9,6 @@ add_executable(main_test
 target_include_directories(main_test PUBLIC ${CMAKE_SOURCE_DIR}/include)
 
 # Link the test executable with GTest and the shared library
-target_link_libraries(main_test PRIVATE GTest::GTest GTest::Main libsysfail)
+target_link_libraries(main_test PRIVATE GTest::GTest GTest::Main sysfail)
 
 gtest_discover_tests(main_test)

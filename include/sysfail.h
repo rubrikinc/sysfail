@@ -1,3 +1,6 @@
+#ifndef _SYSFAIL_H
+#define _SYSFAIL_H
+
 extern "C" {
     struct sysfail_plan_t {
     };
@@ -7,3 +10,5 @@ extern "C" {
     };
     sysfail_session_t* start(const sysfail_plan_t *);
 }
+
+#endif
