@@ -9,6 +9,7 @@
 
 namespace sysfail {
     using Syscall = int;
+    using Errno = int;
 
     const int OneMillion = 1000000;
 
@@ -16,7 +17,10 @@ namespace sysfail {
         double fail_probability;
         double delay_probability;
         std::chrono::microseconds max_delay;
+        std::map<Errno, double> error_weights;
     };
+
+    struct AddrRange;
     struct Plan {
         const std::unordered_map<Syscall, const Outcome> outcomes;
         const std::function<bool(pid_t)> selector;
@@ -28,7 +32,10 @@ namespace sysfail {
         Plan() : outcomes({}), selector([](pid_t) { return false; }) {}
     };
     class Session {
+    private:
+        char on;
     public:
+        // Must not be called only once
         explicit Session(const Plan& _plan);
         bool stop();
     };

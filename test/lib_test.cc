@@ -62,7 +62,6 @@ namespace sysfail {
 	TEST(SysFail, LoadSessionWithoutFailureInjection) {
 		sysfail::Session s({});
 		s.stop();
-		std::cout << "Dummy test" << std::endl;
 	}
 
 	TEST(SysFail, LoadSessionWithFailureInjection) {
@@ -71,13 +70,16 @@ namespace sysfail {
 
 		sysfail::Plan p(
 			{
-				{SYS_open, {1.0, 0, std::chrono::microseconds(0)}},
-				{SYS_read, {1.0, 0, std::chrono::microseconds(0)}}
+				{SYS_read, {1.0, 0, std::chrono::microseconds(0), {{EIO, 1.0}}}}
 			},
-			[](pid_t pid) { return true; }
+			[](pid_t pid) {
+				std::cout << "Selector called for " << pid << std::endl;
+				return true;
+			}
 		);
 
 		sysfail::Session s(p);
+
 		auto r = tFile.read();
 		EXPECT_FALSE(r.has_value());
 		s.stop();

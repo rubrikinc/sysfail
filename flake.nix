@@ -17,6 +17,7 @@
             gcc
             gnumake
             pkg-config
+            gdb
           ];
 
           buildInputs = with pkgs; [
