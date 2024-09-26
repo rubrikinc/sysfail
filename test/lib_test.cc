@@ -58,13 +58,24 @@ namespace sysfail {
     	}
 	};
 
-
 	TEST(SysFail, LoadSessionWithoutFailureInjection) {
+		TmpFile tFile;
+		tFile.write("foo bar baz quux");
+
 		sysfail::Session s({});
+		auto success = 0;
+		for (int i = 0; i < 10; i++) {
+			auto r = tFile.read();
+			if (r.has_value()) {
+				success++;
+				EXPECT_EQ(r.value(), "foo bar baz quux");
+			}
+		}
+		EXPECT_EQ(success, 10);
 		s.stop();
 	}
 
-	TEST(SysFail, LoadSessionWithFailureInjection) {
+	TEST(SysFail, LoadSessionWithSysReadBlocked) {
 		TmpFile tFile;
 		tFile.write("foo bar baz quux");
 
@@ -73,16 +84,62 @@ namespace sysfail {
 				{SYS_read, {1.0, 0, std::chrono::microseconds(0), {{EIO, 1.0}}}}
 			},
 			[](pid_t pid) {
-				std::cout << "Selector called for " << pid << std::endl;
 				return true;
 			}
 		);
 
 		sysfail::Session s(p);
-
+		auto success = 0;
+		for (int i = 0; i < 10; i++) {
 		auto r = tFile.read();
-		EXPECT_FALSE(r.has_value());
+			if (r.has_value()) {
+				success++;
+				EXPECT_EQ(r.value(), "foo bar baz quux");
+			}
+		}
+		EXPECT_EQ(success, 0);
 		s.stop();
-		std::cout << "Dummy test" << std::endl;
+	}
+
+	TEST(SysFail, SysOpenAndReadFailureInjection) {
+		TmpFile tFile;
+		tFile.write("foo bar baz quux");
+
+		sysfail::Plan p(
+			{
+				{SYS_read, {0.33, 0, std::chrono::microseconds(0), {{EIO, 1.0}}}},
+				{SYS_openat, {0.25, 0, std::chrono::microseconds(0), {{EINVAL, 1.0}}}}
+			},
+			[](pid_t pid) {
+				return true;
+			}
+		);
+
+		sysfail::Session s(p);
+		auto success = 0;
+		for (int i = 0; i < 1000; i++) {
+			auto r = tFile.read();
+			if (r.has_value()) {
+				success++;
+			}
+		}
+		// 50 +- 25% (margin of error) around mean; 50% expected success rate
+		// Read happens after open
+		// P(open succeeds) = (1 - 0.25) = 0.75
+		// P(read success | open success) = 0.67
+		// P(read success) = P(read success | open success) * P (open success) =
+		//     0.67 * 0.75 = 0.50
+		EXPECT_GT(success, 250);
+		EXPECT_LT(success, 750);
+		s.stop();
+
+		success = 0;
+		for (int i = 0; i < 100; i++) {
+			auto r = tFile.read();
+			if (r.has_value()) {
+				success++;
+			}
+		}
+		EXPECT_EQ(success, 100);
 	}
 }
