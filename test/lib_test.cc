@@ -123,7 +123,7 @@ namespace sysfail {
 				success++;
 			}
 		}
-		// 50 +- 25% (margin of error) around mean; 50% expected success rate
+		// 50 +- 25% (margin of error) around mean 50% expected success rate
 		// Read happens after open
 		// P(open succeeds) = (1 - 0.25) = 0.75
 		// P(read success | open success) = 0.67
