@@ -1,8 +1,10 @@
 #include <gtest/gtest.h>
 #include <sysfail.hh>
 #include <expected>
+#include <chrono>
 
 using namespace testing;
+using namespace std::chrono_literals;
 
 namespace sysfail {
 	std::string makeTempFile() {
@@ -81,7 +83,7 @@ namespace sysfail {
 
 		sysfail::Plan p(
 			{
-				{SYS_read, {1.0, 0, std::chrono::microseconds(0), {{EIO, 1.0}}}}
+				{SYS_read, {1.0, 0, 0us, {{EIO, 1.0}}}}
 			},
 			[](pid_t pid) {
 				return true;
@@ -107,8 +109,8 @@ namespace sysfail {
 
 		sysfail::Plan p(
 			{
-				{SYS_read, {0.33, 0, std::chrono::microseconds(0), {{EIO, 1.0}}}},
-				{SYS_openat, {0.25, 0, std::chrono::microseconds(0), {{EINVAL, 1.0}}}}
+				{SYS_read, {0.33, 0, 0us, {{EIO, 1.0}}}},
+				{SYS_openat, {0.25, 0, 0us, {{EINVAL, 1.0}}}}
 			},
 			[](pid_t pid) {
 				return true;
@@ -141,5 +143,48 @@ namespace sysfail {
 			}
 		}
 		EXPECT_EQ(success, 100);
+	}
+
+	TEST(SysFail, SysSlowReadFastWrite) {
+		TmpFile tFile;
+
+		sysfail::Plan p(
+			{
+				{SYS_read, {0, 0.5, 10ms, {}}},
+				{SYS_write, {0, 0, 0ms, {}}}
+			},
+			[](pid_t pid) {
+				return true;
+			}
+		);
+
+		sysfail::Session s(p);
+		auto read_tm = 0ns, write_tm = 0ns;
+		for (int i = 0; i < 100; i++) {
+			auto str = "foo bar " + i;
+			auto write_start = std::chrono::system_clock::now();
+			tFile.write(str);
+			write_tm += std::chrono::system_clock::now() - write_start;
+			auto read_start = std::chrono::system_clock::now();
+			auto r = tFile.read();
+			read_tm += std::chrono::system_clock::now() - read_start;
+			EXPECT_EQ(r.value(), str);
+		}
+		EXPECT_GT(static_cast<double>(read_tm.count())/write_tm.count(), 2);
+		s.stop();
+
+		read_tm = 0ns, write_tm = 0ns;
+		for (int i = 0; i < 100; i++) {
+			auto str = "baz quux " + i;
+			auto write_start = std::chrono::system_clock::now();
+			tFile.write(str);
+			write_tm += std::chrono::system_clock::now() - write_start;
+			auto read_start = std::chrono::system_clock::now();
+			auto r = tFile.read();
+			read_tm += std::chrono::system_clock::now() - read_start;
+			EXPECT_EQ(r.value(), str);
+		}
+
+		EXPECT_LT(static_cast<double>(read_tm.count())/write_tm.count(), 1);
 	}
 }

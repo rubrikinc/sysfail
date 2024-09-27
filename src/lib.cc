@@ -8,6 +8,7 @@
 #include <csignal>
 #include <unistd.h>
 #include <random>
+#include <thread>
 
 #include "sysfail.hh"
 #include "sysfail.h"
@@ -87,25 +88,30 @@ namespace sysfail {
 
         thread_local std::mt19937 rnd_eng(rd());
 
+        std::uniform_real_distribution<double> p_dist(0, 1);
+        if (o->second.delay_probability > 0) {
+            if (p_dist(rnd_eng) < o->second.delay_probability) {
+                std::uniform_int_distribution<int> delay_dist(0, o->second.max_delay.count());
+                std::this_thread::sleep_for(std::chrono::microseconds(delay_dist(rnd_eng)));
+            }
+        }
         if (o->second.fail_probability > 0) {
-            std::uniform_real_distribution<double> dist(0, 1);
-
-            if (dist(rnd_eng) < o->second.fail_probability) {
+            if (p_dist(rnd_eng) < o->second.fail_probability) {
                 double total_wt = 0;
                 for (const auto& [err, wt] : o->second.error_weights) {
                     total_wt += wt;
                 }
-                auto err_wt = dist(rnd_eng) * total_wt;
+                auto err_wt = p_dist(rnd_eng) * total_wt;
                 for (const auto& [err, wt] : o->second.error_weights) {
                     err_wt -= wt;
                     if (err_wt <= 0) {
                         ctx->uc_mcontext.gregs[REG_RAX] = -err;
-                        // ctx->uc_mcontext.gregs[REG_RDI] = err; // Set errno to err
                         return;
                     }
                 }
             }
         }
+
         pass_thru(ctx);
     }
 
@@ -119,16 +125,6 @@ namespace sysfail {
         }
 
         sysfail_restore(ctx->uc_mcontext.gregs);
-
-        // if (setcontext(ctx) == -1) {
-        //     if (current_session) {
-        //         current_session->on = SYSCALL_DISPATCH_FILTER_ALLOW;
-        //     }
-        //     auto err_str = std::string(std::strerror(errno));
-        //     std::cerr << "Failed to set context: "
-        //               << err_str << '\n';
-        //     throw std::runtime_error("Failed to set context: " + err_str);
-        // }
     }
 
     void enable_maybe(
@@ -142,12 +138,9 @@ namespace sysfail {
         }
 
         for (const auto& r : pass_thru) {
-            std::cerr << "Prctl start: " << r.start << ", len: " << r.length << "\n";
             auto ret = prctl(
                 PR_SET_SYSCALL_USER_DISPATCH,
                 PR_SYS_DISPATCH_ON,
-                // 0x7ffff7a8c000, // 0x41e000 // 0, // 0x7ffff7f58000, // 0
-                // 0x7ffff7fb7000, // 0x10000, //0x427000, // 0x7ffff7926000, // 140737348866048, // 140737353867264, //140737488351232,
                 r.start,
                 r.length,
                 &current_session->on);
@@ -161,14 +154,11 @@ namespace sysfail {
             }
         }
 
-        std::cerr << "Enabled sysfail for " << pid << "\n";
         current_session->on = SYSCALL_DISPATCH_FILTER_BLOCK;
     }
 }
 
 sysfail::Session::Session(const Plan& _plan) {
-    std::cout << "sysfail::Session::Session(const &)" << std::endl;
-
     auto m = get_mmap(getpid());
     assert(m.has_value());
 
@@ -192,8 +182,6 @@ sysfail::Session::Session(const Plan& _plan) {
             << std::strerror(errno) << '\n';
         throw std::runtime_error("Failed to set new sigaction");
     }
-
-    std::cerr << "Sig handler set\n";
 
     enable_maybe(_plan, gettid(), mappings);
 }
