@@ -19,20 +19,49 @@ extern "C" {
 }
 
 namespace sysfail {
+    struct ActiveOutcome {
+        double fail_p;
+        double delay_p;
+        std::chrono::microseconds max_delay;
+        std::map<double, Errno> error_by_cumulative_p;
+
+        ActiveOutcome(
+            const Outcome& _o
+        ) : fail_p(_o.fail_probability),
+            delay_p(_o.delay_probability),
+            max_delay(_o.max_delay) {
+            double cumulative = 0;
+            for (const auto& [err_no, weight] : _o.error_weights) {
+                cumulative += weight;
+                error_by_cumulative_p[cumulative] = err_no;
+            }
+        }
+    };
+
+    struct ActivePlan {
+        std::unordered_map<Syscall, const ActiveOutcome> outcomes;
+        const std::function<bool(pid_t)> selector;
+
+        ActivePlan(
+            const Plan& _plan
+        ) : selector(_plan.selector) {
+            for (const auto& [call, o] : _plan.outcomes) {
+                outcomes.insert({call, o});
+            }
+        }
+    };
+
     struct ActiveSession {
-        const Plan& plan;
+        ActivePlan plan;
         const std::vector<AddrRange> pass_thru;
         char on;
     };
 
-    volatile ActiveSession* current_session = nullptr;
+    std::shared_ptr<ActiveSession> session = nullptr;
 
     std::random_device rd;
 
     static void pass_thru(ucontext_t *ctx) {
-        // current_session->on = SYSCALL_DISPATCH_FILTER_ALLOW;
-        // std::cerr << "Passing through\n";
-
         long rax = ctx->uc_mcontext.gregs[REG_RAX];
         long rdi = ctx->uc_mcontext.gregs[REG_RDI];
         long rsi = ctx->uc_mcontext.gregs[REG_RSI];
@@ -76,7 +105,7 @@ namespace sysfail {
     }
 
     void fail_maybe(
-        const Plan& plan,
+        const ActivePlan& plan,
         Syscall call,
         ucontext_t *ctx
     ) {
@@ -89,25 +118,20 @@ namespace sysfail {
         thread_local std::mt19937 rnd_eng(rd());
 
         std::uniform_real_distribution<double> p_dist(0, 1);
-        if (o->second.delay_probability > 0) {
-            if (p_dist(rnd_eng) < o->second.delay_probability) {
+        if (o->second.delay_p > 0) {
+            if (p_dist(rnd_eng) < o->second.delay_p) {
                 std::uniform_int_distribution<int> delay_dist(0, o->second.max_delay.count());
                 std::this_thread::sleep_for(std::chrono::microseconds(delay_dist(rnd_eng)));
             }
         }
-        if (o->second.fail_probability > 0) {
-            if (p_dist(rnd_eng) < o->second.fail_probability) {
-                double total_wt = 0;
-                for (const auto& [err, wt] : o->second.error_weights) {
-                    total_wt += wt;
-                }
-                auto err_wt = p_dist(rnd_eng) * total_wt;
-                for (const auto& [err, wt] : o->second.error_weights) {
-                    err_wt -= wt;
-                    if (err_wt <= 0) {
-                        ctx->uc_mcontext.gregs[REG_RAX] = -err;
-                        return;
-                    }
+        if (o->second.fail_p > 0) {
+            if (p_dist(rnd_eng) < o->second.fail_p) {
+                auto err_p =p_dist(rnd_eng);
+                auto e = o->second.error_by_cumulative_p.lower_bound(err_p);
+                if (e != o->second.error_by_cumulative_p.end()) {
+                    // kernel returns negative 0 - 4096 error codes in %rax
+                    ctx->uc_mcontext.gregs[REG_RAX] = -e->second;
+                    return;
                 }
             }
         }
@@ -117,9 +141,10 @@ namespace sysfail {
 
     static void handle_sigsys(int sig, siginfo_t *info, void *ucontext) {
         ucontext_t *ctx = (ucontext_t *)ucontext;
+        auto s = session;
 
-        if (current_session) {
-            fail_maybe(current_session->plan, ctx->uc_mcontext.gregs[REG_RAX], ctx);
+        if (s) {
+            fail_maybe(s->plan, ctx->uc_mcontext.gregs[REG_RAX], ctx);
         } else {
             pass_thru(ctx);
         }
@@ -133,7 +158,7 @@ namespace sysfail {
         const std::vector<sysfail::AddrRange>& pass_thru
     ) {
         if (!plan.selector(pid)) {
-            std::cerr << "Not enabling sysfail for " << pid << "\n";
+            // std::cerr << "Not enabling sysfail for " << pid << "\n";
             return;
         }
 
@@ -143,7 +168,7 @@ namespace sysfail {
                 PR_SYS_DISPATCH_ON,
                 r.start,
                 r.length,
-                &current_session->on);
+                &session->on);
             if (ret == -1) {
                 auto errStr = std::string(std::strerror(errno));
                 std::cerr
@@ -154,7 +179,8 @@ namespace sysfail {
             }
         }
 
-        current_session->on = SYSCALL_DISPATCH_FILTER_BLOCK;
+
+        session->on = SYSCALL_DISPATCH_FILTER_BLOCK;
     }
 }
 
@@ -164,7 +190,10 @@ sysfail::Session::Session(const Plan& _plan) {
 
     auto mappings = m->bypass_mappings();
 
-    current_session = new ActiveSession{_plan, mappings, SYSCALL_DISPATCH_FILTER_ALLOW};
+    session = std::make_shared<ActiveSession>(
+        _plan,
+        mappings,
+        SYSCALL_DISPATCH_FILTER_ALLOW);
 
     struct sigaction action;
     sigset_t mask;
@@ -187,7 +216,7 @@ sysfail::Session::Session(const Plan& _plan) {
 }
 
 bool sysfail::Session::stop() {
-    current_session->on = SYSCALL_DISPATCH_FILTER_ALLOW;
+    session->on = SYSCALL_DISPATCH_FILTER_ALLOW;
     return true;
 }
 
