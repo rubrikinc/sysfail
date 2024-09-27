@@ -1,6 +1,7 @@
 #include "map.hh"
 
 #include <regex>
+#include <cassert>
 
 std::optional<sysfail::Mapping> sysfail::get_mmap(pid_t pid) {
     Mapping mapping;
@@ -57,12 +58,14 @@ bool sysfail::AddrRange::libsysfail() const {
     return std::regex_match(path, soRegex);
 }
 
-std::vector<sysfail::AddrRange> sysfail::Mapping::bypass_mappings() {
+sysfail::AddrRange sysfail::Mapping::self_text() {
     std::vector<AddrRange> mappings;
     for (const auto& [_, info] : map) {
         if (info.executable() && info.libsysfail()) {
             mappings.push_back(info);
         }
     }
-    return mappings;
+    assert(mappings.size() == 1);
+
+    return mappings[0];
 }

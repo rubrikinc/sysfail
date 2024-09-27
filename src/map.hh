@@ -26,7 +26,7 @@ namespace sysfail {
     struct Mapping {
         std::map<uintptr_t, AddrRange> map;
 
-        std::vector<AddrRange> bypass_mappings();
+        AddrRange self_text();
     };
 
     std::optional<Mapping> get_mmap(pid_t pid);

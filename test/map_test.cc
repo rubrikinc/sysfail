@@ -40,12 +40,10 @@ namespace sysfail {
 		auto m = get_mmap(getpid());
         ASSERT_TRUE(m.has_value());
 
-		auto mappings = m->bypass_mappings();
+		auto mappings = m->self_text();
 
-		ASSERT_EQ(mappings.size(), 1);
+		ASSERT_TRUE(mappings.executable());
 
-		ASSERT_TRUE(mappings[0].executable());
-
-		ASSERT_TRUE(mappings[0].path.find("libsysfail.so") != std::string::npos);
+		ASSERT_TRUE(mappings.path.find("libsysfail.so") != std::string::npos);
 	}
 }
