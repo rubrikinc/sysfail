@@ -37,7 +37,7 @@ namespace sysfail {
     public:
         // Must not be called only once
         explicit Session(const Plan& _plan);
-        bool stop();
+        ~Session();
     };
 }
 

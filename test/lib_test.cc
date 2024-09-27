@@ -74,7 +74,6 @@ namespace sysfail {
 			}
 		}
 		EXPECT_EQ(success, 10);
-		s.stop();
 	}
 
 	TEST(SysFail, LoadSessionWithSysReadBlocked) {
@@ -100,7 +99,6 @@ namespace sysfail {
 			}
 		}
 		EXPECT_EQ(success, 0);
-		s.stop();
 	}
 
 	TEST(SysFail, SysOpenAndReadFailureInjection) {
@@ -117,25 +115,26 @@ namespace sysfail {
 			}
 		);
 
-		sysfail::Session s(p);
-		auto success = 0;
-		for (int i = 0; i < 1000; i++) {
-			auto r = tFile.read();
-			if (r.has_value()) {
-				success++;
-			}
+		{
+		    sysfail::Session s(p);
+		    auto success = 0;
+		    for (int i = 0; i < 1000; i++) {
+		    	auto r = tFile.read();
+		    	if (r.has_value()) {
+		    		success++;
+		    	}
+		    }
+		    // 50 +- 25% (margin of error) around mean 50% expected success rate
+		    // Read happens after open
+		    // P(open succeeds) = (1 - 0.25) = 0.75
+		    // P(read success | open success) = 0.67
+		    // P(read success) = P(read success | open success) * P (open success) =
+		    //     0.67 * 0.75 = 0.50
+		    EXPECT_GT(success, 250);
+		    EXPECT_LT(success, 750);
 		}
-		// 50 +- 25% (margin of error) around mean 50% expected success rate
-		// Read happens after open
-		// P(open succeeds) = (1 - 0.25) = 0.75
-		// P(read success | open success) = 0.67
-		// P(read success) = P(read success | open success) * P (open success) =
-		//     0.67 * 0.75 = 0.50
-		EXPECT_GT(success, 250);
-		EXPECT_LT(success, 750);
-		s.stop();
 
-		success = 0;
+		auto success = 0;
 		for (int i = 0; i < 100; i++) {
 			auto r = tFile.read();
 			if (r.has_value()) {
@@ -158,22 +157,23 @@ namespace sysfail {
 			}
 		);
 
-		sysfail::Session s(p);
-		auto read_tm = 0ns, write_tm = 0ns;
-		for (int i = 0; i < 100; i++) {
-			auto str = "foo bar " + i;
-			auto write_start = std::chrono::system_clock::now();
-			tFile.write(str);
-			write_tm += std::chrono::system_clock::now() - write_start;
-			auto read_start = std::chrono::system_clock::now();
-			auto r = tFile.read();
-			read_tm += std::chrono::system_clock::now() - read_start;
-			EXPECT_EQ(r.value(), str);
+		{
+		    sysfail::Session s(p);
+		    auto read_tm = 0ns, write_tm = 0ns;
+		    for (int i = 0; i < 100; i++) {
+		    	auto str = "foo bar " + i;
+		    	auto write_start = std::chrono::system_clock::now();
+		    	tFile.write(str);
+		    	write_tm += std::chrono::system_clock::now() - write_start;
+		    	auto read_start = std::chrono::system_clock::now();
+		    	auto r = tFile.read();
+		    	read_tm += std::chrono::system_clock::now() - read_start;
+		    	EXPECT_EQ(r.value(), str);
+		    }
+		    EXPECT_GT(static_cast<double>(read_tm.count())/write_tm.count(), 2);
 		}
-		EXPECT_GT(static_cast<double>(read_tm.count())/write_tm.count(), 2);
-		s.stop();
 
-		read_tm = 0ns, write_tm = 0ns;
+		auto read_tm = 0ns, write_tm = 0ns;
 		for (int i = 0; i < 100; i++) {
 			auto str = "baz quux " + i;
 			auto write_start = std::chrono::system_clock::now();

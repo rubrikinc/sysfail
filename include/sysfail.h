@@ -6,7 +6,7 @@ extern "C" {
     };
     struct sysfail_session_t {
         void* data;
-        bool (*stop) (void*);
+        void (*stop) (void*);
     };
     sysfail_session_t* start(const sysfail_plan_t *);
 }

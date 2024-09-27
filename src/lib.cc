@@ -207,16 +207,16 @@ sysfail::Session::Session(const Plan& _plan) {
     session = std::make_shared<ActiveSession>(_plan, m->self_text());
 }
 
-bool sysfail::Session::stop() {
+sysfail::Session::~Session() {
     session->on = SYSCALL_DISPATCH_FILTER_ALLOW;
-    return true;
+    session.reset();
 }
 
 extern "C" {
     sysfail_session_t* start(const sysfail_plan_t *plan) {
         auto session = new sysfail::Session({});
         auto stop = [](void* data) {
-                return static_cast<sysfail::Session*>(data)->stop();
+                delete static_cast<sysfail::Session*>(data);
             };
         return new sysfail_session_t{session, stop};
     }
