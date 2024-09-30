@@ -183,6 +183,7 @@ namespace sysfail {
             for (auto i = 0; i < 10; i++) {
                 std::binomial_distribution<bool> rw_dist;
                 auto reader = rw_dist(rnd_eng);
+                auto disable_explicitly = rw_dist(rnd_eng);
                 threads.push_back(std::thread([&]() {
                     s.add(gettid());
                     int success = 0;
@@ -211,7 +212,9 @@ namespace sysfail {
                         gettid(),
                         success,
                         reader);
-                    s.remove(gettid());
+                    if (disable_explicitly) {
+                        s.remove(gettid());
+                    }
                 }));
             }
             for (auto& t : threads) {
@@ -235,5 +238,31 @@ namespace sysfail {
                 EXPECT_EQ(r.success, attempts);
             }
         }
+    }
+
+    TEST(SysFail, SysfailDisable) {
+        TmpFile f;
+        f.write("foo");
+
+        auto test_thd = gettid();
+
+        sysfail::Plan p(
+            {
+                {SYS_read, {1.0, 0, 0us, {{EIO, 1.0}}}},
+            },
+            [](pid_t tid) {
+                return true;
+            }
+        );
+
+        sysfail::Session s(p);
+        auto r = f.read();
+        EXPECT_FALSE(r.has_value());
+        s.remove(gettid());
+        r = f.read();
+        EXPECT_TRUE(r.has_value());
+        s.add(gettid());
+        r = f.read();
+        EXPECT_FALSE(r.has_value());
     }
 }

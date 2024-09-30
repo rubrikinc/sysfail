@@ -178,7 +178,20 @@ namespace sysfail {
         ucontext_t *ctx = (ucontext_t *)ucontext;
         auto s = session;
 
-        if (s) {
+        if (ctx->uc_mcontext.gregs[REG_RAX] == SYS_rt_sigprocmask) {
+            // **LIBC SPECIFIC NOTE**
+            // `libc` turns off all signals before thread teardown
+            // keep SIGSYS enabled because we don't really have a great way
+            // to check if we are in a teardown phase (and threads manipulating)
+            // signals should not accidentally disable sysfail.
+            //
+            // If push comes to shove we can perhaps detect whether `libc`
+            // `start_thread` (private symbol) is calling us and disable
+            // sysfail, but this would be a hack.
+            auto sigset = (sigset_t*)(ctx->uc_mcontext.gregs[REG_RSI]);
+            sigdelset(sigset, SIGSYS);
+        }
+        if (s && ctx->uc_mcontext.gregs[REG_RAX] != SYS_exit) {
             s->fail_maybe(ctx);
         } else {
             continue_syscall(ctx);
