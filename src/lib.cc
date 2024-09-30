@@ -6,13 +6,14 @@
 #include <cstring>
 #include <cerrno>
 #include <csignal>
-#include <unistd.h>
 #include <random>
 #include <thread>
+#include <linux/unistd.h>
 
 #include "sysfail.hh"
 #include "sysfail.h"
 #include "map.hh"
+#include "syscall.hh"
 
 extern "C" {
     extern void sysfail_restore(greg_t*);
@@ -20,44 +21,16 @@ extern "C" {
 
 namespace sysfail {
     static void continue_syscall(ucontext_t *ctx) {
-        long rax = ctx->uc_mcontext.gregs[REG_RAX];
-        long rdi = ctx->uc_mcontext.gregs[REG_RDI];
-        long rsi = ctx->uc_mcontext.gregs[REG_RSI];
-        long rdx = ctx->uc_mcontext.gregs[REG_RDX];
-        long rcx;
-        long r11;
-
-        register long r10 asm("r10") = ctx->uc_mcontext.gregs[REG_R10];
-        register long r8 asm("r8") = ctx->uc_mcontext.gregs[REG_R8];
-        register long r9 asm("r9") = ctx->uc_mcontext.gregs[REG_R9];
-
-
-        asm volatile("movq %%rcx, %0" : "=r"(rcx));
-        asm volatile("movq %%r11, %0" : "=r"(r11));
-
-        asm volatile(
-            "syscall \n"
-            : "+a"(rax),
-              "+D"(rdi),
-              "+S"(rsi),
-              "+d"(rdx),
-              "+r"(r10),
-              "+r"(r8),
-              "+r"(r9)
-            :
-            : "rcx", "r11", "memory"
-        );
-
-        asm volatile("movq %0, %%rcx" :: "r"(rcx));
-        asm volatile("movq %0, %%r11" :: "r"(r11));
+        auto rax = syscall(
+            ctx->uc_mcontext.gregs[REG_RDI],
+            ctx->uc_mcontext.gregs[REG_RSI],
+            ctx->uc_mcontext.gregs[REG_RDX],
+            ctx->uc_mcontext.gregs[REG_R10],
+            ctx->uc_mcontext.gregs[REG_R8],
+            ctx->uc_mcontext.gregs[REG_R9],
+            ctx->uc_mcontext.gregs[REG_RAX]);
 
         ctx->uc_mcontext.gregs[REG_RAX] = rax;
-        ctx->uc_mcontext.gregs[REG_RDI] = rdi;
-        ctx->uc_mcontext.gregs[REG_RSI] = rsi;
-        ctx->uc_mcontext.gregs[REG_RDX] = rdx;
-        ctx->uc_mcontext.gregs[REG_R10] = r10;
-        ctx->uc_mcontext.gregs[REG_R8] = r8;
-        ctx->uc_mcontext.gregs[REG_R9] = r9;
     }
 
     static void handle_sigsys(int sig, siginfo_t *info, void *ucontext);
