@@ -118,8 +118,23 @@ namespace sysfail {
                 std::cerr
                     << "Failed to enable sysfail for " << self_text.path
                     << ", err: " << errStr << "\n";
-                ;
                 throw std::runtime_error("Failed to enable sysfail: " + errStr);
+            }
+        }
+
+        void thd_disable(pid_t tid) {
+            auto ret = prctl(
+                PR_SET_SYSCALL_USER_DISPATCH,
+                PR_SYS_DISPATCH_OFF,
+                0,
+                0,
+                0);
+            if (ret == -1) {
+                auto errStr = std::string(std::strerror(errno));
+                std::cerr
+                    << "Failed to disable sysfail for " << self_text.path
+                    << ", err: " << errStr << "\n";
+                throw std::runtime_error("Failed to disable sysfail: " + errStr);
             }
         }
 
@@ -183,6 +198,14 @@ sysfail::Session::Session(const Plan& _plan) {
 sysfail::Session::~Session() {
     session->on = SYSCALL_DISPATCH_FILTER_ALLOW;
     session.reset();
+}
+
+void sysfail::Session::add(pid_t tid) {
+    session->thd_enable(tid);
+}
+
+void sysfail::Session::remove(pid_t tid) {
+    session->thd_disable(tid);
 }
 
 extern "C" {

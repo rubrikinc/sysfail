@@ -38,6 +38,8 @@ namespace sysfail {
         // Must not be called only once
         explicit Session(const Plan& _plan);
         ~Session();
+        void add(pid_t tid);
+        void remove(pid_t tid);
     };
 }
 
