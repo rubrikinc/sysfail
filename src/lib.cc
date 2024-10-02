@@ -78,51 +78,45 @@ sysfail::ActiveSession::ActiveSession(
     on = SYSCALL_DISPATCH_FILTER_ALLOW;
 
     enable_handler(SIGSYS, handle_sigsys);
-    enable_handler(SIGRTMIN, enable_sysfail);
+    enable_handler(SIG_REARM, enable_sysfail);
 
-    thd_enable(gettid());
+    thd_enable(); // TODO: enable for all threads
 
     on = SYSCALL_DISPATCH_FILTER_BLOCK;
 }
 
-void sysfail::ActiveSession::disable_sysfail_momentarily(pid_t tid) {
-    thd_disable(tid);
-    struct sigevent sev;
-    timer_t timerid;
-    struct itimerspec its;
-
-    sev.sigev_notify = SIGEV_SIGNAL;
-    sev.sigev_signo = SIGRTMIN;
-    sev.sigev_value.sival_ptr = &timerid;
-    if (timer_create(CLOCK_THREAD_CPUTIME_ID, &sev, &timerid) == -1) {
-        std::cerr << "Failed to create timer, err: "
-                  << std::strerror(errno) << '\n';
-        throw std::runtime_error("Failed to create timer");
-    }
-
-    its.it_value.tv_sec = 0;
-    its.it_value.tv_nsec = 10 * 1e3; // 10us
-    its.it_interval.tv_sec = 0;
-    its.it_interval.tv_nsec = 0;
-    if (timer_settime(timerid, 0, &its, nullptr) == -1) {
-        std::cerr << "Failed to set timer, err: "
-                  << std::strerror(errno) << '\n';
-        throw std::runtime_error("Failed to set timer");
-    }
+pid_t sysfail::ActiveSession::disarm() {
+    auto tid = gettid();
+    ThdSt::accessor a;
+    thd_st.find(a, tid);
+    a->second.on = SYSCALL_DISPATCH_FILTER_ALLOW;
+    return tid;
 }
 
-void sysfail::ActiveSession::thd_enable(pid_t tid) {
+void sysfail::ActiveSession::rearm() {
+    auto tid = gettid();
+    ThdSt::accessor a;
+    thd_st.find(a, tid);
+    a->second.on = SYSCALL_DISPATCH_FILTER_BLOCK;
+}
+
+void sysfail::ActiveSession::thd_enable() {
+    auto tid = gettid();
     if (!plan.selector(tid)) {
         // std::cerr << "Not enabling sysfail for " << pid << "\n";
         return;
     }
+
+    ThdSt::accessor a;
+    thd_st.insert(a, tid);
+    a->second.on = SYSCALL_DISPATCH_FILTER_ALLOW;
 
     auto ret = prctl(
         PR_SET_SYSCALL_USER_DISPATCH,
         PR_SYS_DISPATCH_ON,
         self_text.start,
         self_text.length,
-        &on);
+        &a->second.on);
     if (ret == -1) {
         auto errStr = std::string(std::strerror(errno));
         std::cerr
@@ -130,9 +124,15 @@ void sysfail::ActiveSession::thd_enable(pid_t tid) {
             << ", err: " << errStr << "\n";
         throw std::runtime_error("Failed to enable sysfail: " + errStr);
     }
+
+    a->second.on = SYSCALL_DISPATCH_FILTER_BLOCK;
 }
 
-void sysfail::ActiveSession::thd_disable(pid_t tid) {
+void sysfail::ActiveSession::thd_disable() {
+    auto tid = gettid();
+    ThdSt::accessor a;
+    thd_st.find(a, tid);
+    a->second.on = SYSCALL_DISPATCH_FILTER_ALLOW;
     auto ret = prctl(
         PR_SET_SYSCALL_USER_DISPATCH,
         PR_SYS_DISPATCH_OFF,
@@ -146,6 +146,7 @@ void sysfail::ActiveSession::thd_disable(pid_t tid) {
             << ", err: " << errStr << "\n";
         throw std::runtime_error("Failed to disable sysfail: " + errStr);
     }
+    thd_st.erase(a);
 }
 
 void sysfail::ActiveSession::fail_maybe(ucontext_t *ctx) {
@@ -186,76 +187,49 @@ namespace {
 }
 
 static void sysfail::enable_sysfail(int sig, siginfo_t *info, void *ucontext) {
-    timer_delete(*(timer_t *)info->si_value.sival_ptr);
+    ucontext_t *ctx = (ucontext_t *)ucontext;
     auto s = session;
-    if (s) {
-        auto tid = gettid();
-        s->thd_enable(tid);
-        sysfail_restore(((ucontext_t *)ucontext)->uc_mcontext.gregs);
-    }
+    if (s) { s->rearm(); }
+    sysfail_restore(ctx->uc_mcontext.gregs);
 }
 
 static void sysfail::handle_sigsys(int sig, siginfo_t *info, void *ucontext) {
     ucontext_t *ctx = (ucontext_t *)ucontext;
     auto s = session;
     auto syscall = ctx->uc_mcontext.gregs[REG_RAX];
-    std::vector<std::function<void()>> cleanups;
-    sigset_t mask;
-       if (syscall == SYS_clone3) {
-           // LIBC has two branches: error-on-parent, success-on-parent and a
-           // an early return on child. We can likely do something much better
-           // by fixing the return on child but gdb for some reason does not
-           // jump to the correct PC and process segfaults before that.
-           // TODO: debug this later and try to avoid the momentarily disable
-           // hack.
-           auto tid = gettid();
-           s->disable_sysfail_momentarily(tid);
 
-           ctx->uc_mcontext.gregs[REG_RIP] -= 2; // size(syscall) == 2
-           sysfail_restore(ctx->uc_mcontext.gregs);
-       }    if (syscall == SYS_rt_sigprocmask) {
-        auto tid = gettid();
-        auto cmd = ctx->uc_mcontext.gregs[REG_RDI];
+    log("Handling syscall: %d\n", syscall);
+
+    // LIBC turns off all signals before thread spawn and teardown.
+    // Keep sysfail disabled here because libc wants quiescent state in these
+    // parts.
+    if (s && syscall == SYS_rt_sigprocmask) {
         auto sigset = (sigset_t*)ctx->uc_mcontext.gregs[REG_RSI];
         auto sigsys_on = sigismember(sigset, SIGSYS);
-
-/*         if (sigsys_on) {
-            if (cmd == SIG_BLOCK) {
-                s->thd_disable(tid);
-            } else if (cmd == SIG_UNBLOCK) {
-                s->thd_enable(tid);
+        if (sigsys_on) {
+            auto cmd = ctx->uc_mcontext.gregs[REG_RDI];
+            if (cmd == SIG_BLOCK || cmd == SIG_SETMASK) {
+                auto tid = s->disarm();
+                continue_syscall(ctx);
+                // TODO handle group-leader change (retry EINVAL)
+                auto ret = tgkill(getpid(), tid, SIG_REARM);
+                assert(ret == 0);
+                sysfail_restore(ctx->uc_mcontext.gregs);
+                assert(false);
             }
-        } else if (cmd == SIG_SETMASK) {
-            s->thd_enable(tid);
         }
- */
-        // LIBC turns off all signals before thread teardown
-        // keep SIGSYS enabled because we don't really have a great way
-        // to check if we are in a teardown phase (and threads manipulating)
-        // signals should not accidentally disable sysfail.
-        //
-        // If push comes to shove we can perhaps detect whether `libc`
-        // `start_thread` (private symbol) is calling us and disable
-        // sysfail, but this would be a hack.
-
-        if (sigsys_on && (cmd == SIG_BLOCK || cmd == SIG_SETMASK)) {
-            mask = *sigset;
-            ctx->uc_mcontext.gregs[REG_RSI] = (greg_t)&mask;
-            sigdelset(&mask, SIGSYS);
-            cleanups.emplace_back([=]() {
-                ctx->uc_mcontext.gregs[REG_RSI] = (greg_t)sigset;
-            });
-        }
+    } else if (syscall == SYS_rt_sigreturn) {
+        // TODO handle sigreturn correctly, may be write a test for it?
+        sysfail_restore(ctx->uc_mcontext.gregs);
     }
+
     if (s && syscall != SYS_exit) {
         s->fail_maybe(ctx);
     } else {
         continue_syscall(ctx);
     }
-    for (const auto& cleanup : cleanups) {
-        cleanup();
-    }
     sysfail_restore(ctx->uc_mcontext.gregs);
+    assert(false);
 }
 
 sysfail::Session::Session(const Plan& _plan) {
@@ -270,12 +244,12 @@ sysfail::Session::~Session() {
     session.reset();
 }
 
-void sysfail::Session::add(pid_t tid) {
-    session->thd_enable(tid);
+void sysfail::Session::add() {
+    session->thd_enable();
 }
 
-void sysfail::Session::remove(pid_t tid) {
-    session->thd_disable(tid);
+void sysfail::Session::remove() {
+    session->thd_disable();
 }
 
 extern "C" {

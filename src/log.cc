@@ -10,6 +10,7 @@ void sysfail::log(const char* msg) {
 }
 
 void sysfail::log(const char* msg, long arg1) {
+    const int len = 256;
     char buffer[256];
     int n = snprintf(buffer, sizeof(buffer), msg, arg1);
     syscall(STDERR_FILENO, (long)(buffer), n, 0, 0, 0, SYS_write);

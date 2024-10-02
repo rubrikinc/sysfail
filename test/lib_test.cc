@@ -185,7 +185,7 @@ namespace sysfail {
                 auto reader = rw_dist(rnd_eng);
                 auto disable_explicitly = rw_dist(rnd_eng);
                 threads.push_back(std::thread([&]() {
-                    s.add(gettid());
+                    s.add();
                     int success = 0;
                     for (auto a = 0; a < attempts; a++) {
                         if (reader) {
@@ -213,7 +213,7 @@ namespace sysfail {
                         success,
                         reader);
                     if (disable_explicitly) {
-                        s.remove(gettid());
+                        s.remove();
                     }
                 }));
             }
@@ -240,19 +240,6 @@ namespace sysfail {
         }
     }
 
-    void print_thread_cpu_clock_resolution() {
-        struct timespec res;
-
-        if (clock_getres(CLOCK_THREAD_CPUTIME_ID, &res) == -1) {
-            std::cerr << "Failed to get resolution of THREAD_CPUTIME_ID: "
-                      << std::strerror(errno) << '\n';
-            throw std::runtime_error(
-                "Failed to get resolution of THREAD_CPUTIME_ID");
-        }
-
-        std::cerr << "Resolution(CLOCK_THREAD_CPUTIME_ID): " << res.tv_sec << "s " << res.tv_nsec << "ns\n";
-    }
-
     void elapse(std::chrono::microseconds us) {
         struct timespec start, current;
         long elapsed_time;
@@ -271,7 +258,6 @@ namespace sysfail {
     }
 
     TEST(SysFail, SysfailDisable) {
-        print_thread_cpu_clock_resolution();
         TmpFile f;
         f.write("foo");
 
@@ -291,7 +277,7 @@ namespace sysfail {
         sysfail::Session s(p);
         std::thread t([&]() {
             start_sem.release();
-            s.add(gettid());
+            s.add();
             auto r = f.read();
             EXPECT_FALSE(r.has_value());
 
@@ -304,19 +290,19 @@ namespace sysfail {
             chk_sem.release();
         });
         // wait for failure-injection to start again after clone3
-        elapse(1ms);
+        // elapse(1ms);
 
         start_sem.acquire();
         auto r = f.read();
         EXPECT_FALSE(r.has_value());
-        s.remove(gettid());
+        s.remove();
 
         chk_sem.release();
         r = f.read();
         EXPECT_TRUE(r.has_value());
         chk_sem.acquire();
 
-        s.add(gettid());
+        s.add();
         r = f.read();
         EXPECT_FALSE(r.has_value());
         t.join();
