@@ -1,6 +1,7 @@
 enable_language(ASM)
 set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} -x assembler-with-cpp")
 
+find_package(TBB REQUIRED)
 # Create the shared library
 add_library(sysfail SHARED
     lib.cc
@@ -9,6 +10,8 @@ add_library(sysfail SHARED
     syscall.cc
     restore.S
 )
+
+target_link_libraries(sysfail TBB::tbb)
 
 # Include the top-level include directory for headers
 target_include_directories(sysfail PUBLIC ${CMAKE_SOURCE_DIR}/include)

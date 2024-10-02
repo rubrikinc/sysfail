@@ -24,6 +24,7 @@
             boost
             eigen
             gtest
+            tbb_2021_11
           ];
 
           shellHook = ''
