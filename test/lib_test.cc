@@ -240,7 +240,38 @@ namespace sysfail {
         }
     }
 
+    void print_thread_cpu_clock_resolution() {
+        struct timespec res;
+
+        if (clock_getres(CLOCK_THREAD_CPUTIME_ID, &res) == -1) {
+            std::cerr << "Failed to get resolution of THREAD_CPUTIME_ID: "
+                      << std::strerror(errno) << '\n';
+            throw std::runtime_error(
+                "Failed to get resolution of THREAD_CPUTIME_ID");
+        }
+
+        std::cerr << "Resolution(CLOCK_THREAD_CPUTIME_ID): " << res.tv_sec << "s " << res.tv_nsec << "ns\n";
+    }
+
+    void elapse(std::chrono::microseconds us) {
+        struct timespec start, current;
+        long elapsed_time;
+
+        if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start) == -1) {
+            throw new std::runtime_error("Failed to get starting time");
+        }
+
+        do {
+            if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &current) == -1) {
+                throw new std::runtime_error("Failed to get current time");
+            }
+
+            elapsed_time = (current.tv_sec - start.tv_sec) * 1e6 + (current.tv_nsec - start.tv_nsec) / 1e3;
+        } while (us.count() > elapsed_time);
+    }
+
     TEST(SysFail, SysfailDisable) {
+        print_thread_cpu_clock_resolution();
         TmpFile f;
         f.write("foo");
 
@@ -255,14 +286,39 @@ namespace sysfail {
             }
         );
 
+        std::binary_semaphore chk_sem(1), start_sem(1);
+
         sysfail::Session s(p);
+        std::thread t([&]() {
+            start_sem.release();
+            s.add(gettid());
+            auto r = f.read();
+            EXPECT_FALSE(r.has_value());
+
+            // the main thread only turned off sysfail for itself, not for
+            // other threads
+            chk_sem.acquire();
+            r = f.read();
+            EXPECT_FALSE(r.has_value());
+
+            chk_sem.release();
+        });
+        // wait for failure-injection to start again after clone3
+        elapse(1ms);
+
+        start_sem.acquire();
         auto r = f.read();
         EXPECT_FALSE(r.has_value());
         s.remove(gettid());
+
+        chk_sem.release();
         r = f.read();
         EXPECT_TRUE(r.has_value());
+        chk_sem.acquire();
+
         s.add(gettid());
         r = f.read();
         EXPECT_FALSE(r.has_value());
+        t.join();
     }
 }

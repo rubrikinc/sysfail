@@ -5,6 +5,8 @@ set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} -x assembler-with-cpp")
 add_library(sysfail SHARED
     lib.cc
     map.cc
+    log.cc
+    syscall.cc
     restore.S
 )
 
