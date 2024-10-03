@@ -132,6 +132,9 @@ void sysfail::ActiveSession::thd_disable() {
     auto tid = gettid();
     ThdSt::accessor a;
     thd_st.find(a, tid);
+
+    if (a.empty()) return; // idempotency OR !selector(tid) etc
+
     a->second.on = SYSCALL_DISPATCH_FILTER_ALLOW;
     auto ret = prctl(
         PR_SET_SYSCALL_USER_DISPATCH,
