@@ -172,7 +172,7 @@ void sysfail::ActiveSession::fail_maybe(ucontext_t *ctx) {
     }
     if (o->second.fail_p > 0) {
         if (p_dist(rnd_eng) < o->second.fail_p) {
-            auto err_p =p_dist(rnd_eng);
+            auto err_p = p_dist(rnd_eng);
             auto e = o->second.error_by_cumulative_p.lower_bound(err_p);
             if (e != o->second.error_by_cumulative_p.end()) {
                 // kernel returns negative 0 - 4096 error codes in %rax

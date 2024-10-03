@@ -6,7 +6,9 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <cstring>
-#include <cisq.hh>
+#include <regex>
+
+#include "cisq.hh"
 
 using namespace testing;
 using namespace std::chrono_literals;
@@ -306,5 +308,53 @@ namespace sysfail {
         r = f.read();
         EXPECT_FALSE(r.has_value());
         t.join();
+    }
+
+    TEST(SysFail, ErrorDistribution) {
+        TmpFile f;
+        f.write("foo");
+
+        auto test_thd = gettid();
+
+        sysfail::Plan p(
+            {
+                {SYS_read, {1.0, 0, 0us, {{EIO, 0.1}, {EINVAL, 0.3}, {EFAULT, 0.6}}}},
+            },
+            [](pid_t tid) {
+                return true;
+            }
+        );
+
+        std::unordered_map<std::string, int> error_count;
+
+        {
+            Session s(p);
+            for (int i = 0; i < 1000; i++) {
+                auto ret = f.read();
+                EXPECT_FALSE(ret.has_value());
+                auto m = std::string(ret.error().what());
+                std::regex cause(R"(^.+ err: (.+)$)");
+                std::smatch m_res;
+                EXPECT_TRUE(std::regex_search(m, m_res, cause));
+                auto err_frag = m_res[1];
+                auto e = error_count.find(err_frag);
+                if (e == error_count.end()) {
+                    error_count.emplace(err_frag, 1);
+                } else {
+                    e->second++;
+                }
+            }
+        }
+
+        EXPECT_EQ(3, error_count.size());
+        auto eio_count = error_count[std::strerror(EIO)];
+        auto einval_count = error_count[std::strerror(EINVAL)];
+        auto efault_count = error_count[std::strerror(EFAULT)];
+
+        EXPECT_LT(eio_count, einval_count);
+        EXPECT_LT(einval_count, efault_count);
+        EXPECT_LT(eio_count + einval_count, efault_count);
+        EXPECT_GT(2 * (eio_count + einval_count), efault_count);
+        EXPECT_EQ(1000, eio_count + einval_count + efault_count);
     }
 }

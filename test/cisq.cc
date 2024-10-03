@@ -18,10 +18,9 @@ namespace {
         return path;
     }
 
-    std::runtime_error err_msg(const char* msg, long sys_return) {
-        assert(sys_return < 0);
+    std::runtime_error err_msg(const char* msg, int op_errno) {
         return std::runtime_error(
-            std::string(msg) + ", err: " + std::strerror(-sys_return));
+            std::string(msg) + ", err: " + std::strerror(op_errno));
     }
 
     std::expected<int, std::runtime_error> open_file(
@@ -31,7 +30,7 @@ namespace {
         auto fd = syscall(SYS_openat, AT_FDCWD, path.c_str(), flags);
         if (fd < 0) {
             return std::unexpected(std::runtime_error(
-                err_msg("Failed to open file", fd)));
+                err_msg("Failed to open file", errno)));
         }
         return fd;
     }
@@ -52,9 +51,10 @@ std::expected<std::string, std::runtime_error> TmpFile::read() {
     std::string content;
     char buffer[1024];
     auto bytes = syscall(SYS_read, fd.value(), buffer, sizeof(buffer));
+    auto read_err = errno;
     syscall(SYS_close, fd.value());
     if (bytes < 0) {
-        return std::unexpected(err_msg("Failed to read file", bytes));
+        return std::unexpected(err_msg("Failed to read file", read_err));
     }
     content.append(buffer, bytes);
     return content;
@@ -69,9 +69,10 @@ std::expected<void, std::runtime_error> TmpFile::write(
         return std::unexpected(fd.error());
     }
     auto bytes = syscall(SYS_write, fd.value(), content.c_str(), content.size());
+    auto write_err = errno;
     syscall(SYS_close, fd.value());
     if (bytes < 0) {
-        return std::unexpected(err_msg("Failed to write file", bytes));
+        return std::unexpected(err_msg("Failed to write file", errno));
     }
     return {};
 }
