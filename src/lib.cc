@@ -158,7 +158,8 @@ static void send_signal(pid_t tid, int sig, std::binary_semaphore* sem) {
 }
 
 void sysfail::ActiveSession::thd_enable(pid_t tid) {
-    // TODO: respect pid-filter
+    if (! plan.selector(tid)) return; // TODO: log
+
     ThdSt::accessor a;
     assert(thd_st.insert(a, tid));
 
