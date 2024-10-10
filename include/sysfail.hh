@@ -5,6 +5,7 @@
 #include <memory>
 #include <map>
 #include <functional>
+#include <shared_mutex>
 #include <sys/syscall.h>
 
 namespace sysfail {
@@ -44,7 +45,7 @@ namespace sysfail {
     };
 
     class Session {
-    private:
+        std::shared_mutex lck;
         char on; // TODO: delete me
     public:
         // Must not be called only once

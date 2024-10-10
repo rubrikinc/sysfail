@@ -90,16 +90,19 @@ sysfail::ActiveSession::ActiveSession(
 pid_t sysfail::ActiveSession::disarm() {
     auto tid = gettid();
     ThdSt::accessor a;
-    thd_st.find(a, tid);
-    a->second.on = SYSCALL_DISPATCH_FILTER_ALLOW;
+    if (thd_st.find(a, tid)) {
+        a->second.on = SYSCALL_DISPATCH_FILTER_ALLOW;
+    }
+    assert(! a.empty());
     return tid;
 }
 
 void sysfail::ActiveSession::rearm() {
     auto tid = gettid();
     ThdSt::accessor a;
-    thd_st.find(a, tid);
-    a->second.on = SYSCALL_DISPATCH_FILTER_BLOCK;
+    if (thd_st.find(a, tid)) {
+        a->second.on = SYSCALL_DISPATCH_FILTER_BLOCK;
+    }
 }
 
 static void enable(
@@ -143,21 +146,31 @@ static void disable(
     // caller must erase the thd-state
 }
 
-static void send_signal(pid_t tid, int sig) {
+static void send_signal(pid_t tid, int sig, std::binary_semaphore* sem) {
     // TODO handle group-leader change (retry EINVAL)
-    auto ret = tgkill(getpid(), tid, sig);
+    auto ret = sysfail::syscall(getpid(), tid, sig, 0, 0, 0, SYS_tgkill);
+    if (ret < 0) {
+        if (ret == -ESRCH) {
+            // the thread died without telling us it was dying but we don't want
+            // to deadlock so we release
+            if (sem) sem->release();
+            return;
+        }
+    }
+
     assert(ret == 0);
 }
 
 void sysfail::ActiveSession::thd_enable(pid_t tid) {
+    // TODO: respect pid-filter
     ThdSt::accessor a;
-    thd_st.insert(a, tid);
+    assert(thd_st.insert(a, tid));
 
     auto& sem = a->second.sig_coord;
     sem.acquire();
     a.release();
 
-    send_signal(tid, SIG_ENABLE);
+    send_signal(tid, SIG_ENABLE, &sem);
 
     sem.acquire();
     sem.release(); // leave sem in a re-usable state
@@ -174,7 +187,7 @@ void sysfail::ActiveSession::thd_disable(pid_t tid) {
     sem.acquire();
     a.release();
 
-    send_signal(tid, SIG_DISABLE);
+    send_signal(tid, SIG_DISABLE, &sem);
 
     sem.acquire();
     sem.release(); // leave sem in a re-usable state
@@ -190,18 +203,16 @@ void sysfail::ActiveSession::thd_enable() {
     }
 
     ThdSt::accessor a;
-    thd_st.insert(a, tid);
-    a->second.on = SYSCALL_DISPATCH_FILTER_ALLOW;
-
-    enable(self_text, a);
+    if (thd_st.insert(a, tid)) {
+        a->second.on = SYSCALL_DISPATCH_FILTER_ALLOW;
+        enable(self_text, a);
+    }
 }
 
 void sysfail::ActiveSession::thd_disable() {
     auto tid = gettid();
     ThdSt::accessor a;
-    thd_st.find(a, tid);
-
-    if (a.empty()) return; // idempotency OR !selector(tid) etc
+    if (! thd_st.find(a, tid)) return;
 
     a->second.on = SYSCALL_DISPATCH_FILTER_ALLOW;
     disable(self_text, a);
@@ -300,37 +311,34 @@ static void sysfail::reenable_sysfail(int sig, siginfo_t *info, void *ucontext) 
 
 static void sysfail::handle_sigsys(int sig, siginfo_t *info, void *ucontext) {
     ucontext_t *ctx = (ucontext_t *)ucontext;
-    // TODO: free this on sysfail_restore
-    auto s = session;
-    auto syscall = ctx->uc_mcontext.gregs[REG_RAX];
 
-    log("Handling syscall: %d\n", syscall);
+    {
+        auto s = session;
+        auto syscall = ctx->uc_mcontext.gregs[REG_RAX];
 
-    // LIBC turns off all signals before thread spawn and teardown.
-    // Keep sysfail disabled here because libc wants quiescent state in these
-    // parts.
-    if (s && syscall == SYS_rt_sigprocmask) {
-        auto sigset = (sigset_t*)ctx->uc_mcontext.gregs[REG_RSI];
-        auto sigsys_on = sigismember(sigset, SIGSYS);
-        if (sigsys_on) {
-            auto cmd = ctx->uc_mcontext.gregs[REG_RDI];
-            if (cmd == SIG_BLOCK || cmd == SIG_SETMASK) {
-                auto tid = s->disarm();
-                continue_syscall(ctx);
-                send_signal(tid, SIG_REARM);
-                sysfail_restore(ctx->uc_mcontext.gregs);
-                assert(false);
+        // log("Handling syscall: %d\n", syscall);
+
+        // LIBC turns off all signals before thread spawn and teardown.
+        // Keep sysfail disabled here because libc wants quiescent state in
+        // these parts.
+        if (s && syscall == SYS_rt_sigprocmask) {
+            auto sigset = (sigset_t*)ctx->uc_mcontext.gregs[REG_RSI];
+            auto sigsys_on = sigismember(sigset, SIGSYS);
+            if (sigsys_on) {
+                auto cmd = ctx->uc_mcontext.gregs[REG_RDI];
+                if (cmd == SIG_BLOCK || cmd == SIG_SETMASK) {
+                    auto tid = s->disarm();
+                    continue_syscall(ctx);
+                    send_signal(tid, SIG_REARM, nullptr);
+                }
             }
+        } else if (syscall == SYS_rt_sigreturn) {
+            // TODO handle sigreturn correctly, may be write a test for it?
+        } else if (s && syscall != SYS_exit) {
+            s->fail_maybe(ctx);
+        } else {
+            continue_syscall(ctx);
         }
-    } else if (syscall == SYS_rt_sigreturn) {
-        // TODO handle sigreturn correctly, may be write a test for it?
-        sysfail_restore(ctx->uc_mcontext.gregs);
-    }
-
-    if (s && syscall != SYS_exit) {
-        s->fail_maybe(ctx);
-    } else {
-        continue_syscall(ctx);
     }
     sysfail_restore(ctx->uc_mcontext.gregs);
     assert(false);
@@ -344,23 +352,37 @@ sysfail::Session::Session(const Plan& _plan) {
 }
 
 sysfail::Session::~Session() {
-    session->on = SYSCALL_DISPATCH_FILTER_ALLOW;
-    session.reset();
+    std::unique_lock<std::shared_mutex> l(lck);
+    auto s = session;
+    if (s) {
+        std::vector<pid_t> tids;
+        for(ThdSt::iterator i = s->thd_st.begin(); i != s->thd_st.end(); ++i) {
+            tids.push_back(i->first);
+        }
+        for (auto tid : tids) {
+            s->thd_disable(tid);
+        }
+        session.reset();
+    }
 }
 
 void sysfail::Session::add() {
+    std::shared_lock<std::shared_mutex> l(lck);
     session->thd_enable();
 }
 
 void sysfail::Session::remove() {
+    std::shared_lock<std::shared_mutex> l(lck);
     session->thd_disable();
 }
 
 void sysfail::Session::add(pid_t tid) {
+    std::shared_lock<std::shared_mutex> l(lck);
     session->thd_enable(tid);
 }
 
 void sysfail::Session::remove(pid_t tid) {
+    std::shared_lock<std::shared_mutex> l(lck);
     session->thd_disable(tid);
 }
 
