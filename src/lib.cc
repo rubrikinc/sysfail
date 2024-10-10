@@ -161,7 +161,7 @@ void sysfail::ActiveSession::thd_enable(pid_t tid) {
     if (! plan.selector(tid)) return; // TODO: log
 
     ThdSt::accessor a;
-    assert(thd_st.insert(a, tid));
+    if (! thd_st.insert(a, tid)) return; // idempotency check
 
     auto& sem = a->second.sig_coord;
     sem.acquire();
@@ -178,6 +178,10 @@ void sysfail::ActiveSession::thd_disable(pid_t tid) {
     if (! thd_st.find(a, tid)) {
         std::cerr << "No thread state for " << tid << "\n";
         return;
+    }
+    auto want = false;
+    if (! a->second.being_removed.compare_exchange_strong(want, true)) {
+        return; // idempotency check
     }
 
     auto& sem = a->second.sig_coord;

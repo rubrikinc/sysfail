@@ -506,4 +506,122 @@ namespace sysfail {
             for (auto& t : thds) t.join();
         };
     }
+
+    TEST(SysFail, ThreadAddRemoveIdempotence) {
+        TmpFile f;
+        f.write("foo");
+
+        auto test_thd = gettid();
+
+        sysfail::Plan p(
+            {
+                {SYS_read, {1.0, 0, 0us, {{EIO, 1}}}},
+            },
+            [](pid_t tid) {
+                return tid % 2 == 0;
+            }
+        );
+
+        {
+            std::random_device rd;
+            thread_local std::mt19937 rnd_eng(rd());
+
+            std::binomial_distribution<bool> redundant_op;
+
+            Session s(p);
+
+            const int thd_count = 40;
+
+            std::barrier b(thd_count + 1);
+            std::vector<std::thread> thds;
+            oneapi::tbb::concurrent_vector<pid_t> tids;
+
+            for (int i = 0; i < thd_count; i++) {
+                auto redundant_add = redundant_op(rnd_eng);
+                auto redundant_rm = redundant_op(rnd_eng);
+                auto redundant_branch = redundant_op(rnd_eng);
+                thds.emplace_back([=, &tids, &b, &s, &f]() {
+                    auto tid = gettid();
+                    tids.push_back(tid);
+
+                    b.arrive_and_wait(); // 1
+                    if (tid % 3 == 0) {
+                        s.add(tid);
+                    } else if (tid % 3 == 1) {
+                        s.add();
+                    }
+                    if (redundant_add) {
+                        if (redundant_branch) {
+                            s.add(tid);
+                        } else {
+                            s.add();
+                        }
+                    }
+
+                    b.arrive_and_wait(); // 2
+                    auto ret = f.read();
+                    if (tid % 2 == 0) {
+                        EXPECT_FALSE(ret.has_value());
+                    } else {
+                        EXPECT_TRUE(ret.has_value());
+                        EXPECT_EQ(ret.value(), "foo");
+                    }
+
+                    b.arrive_and_wait(); // 3
+                    if (tid % 4 == 1) {
+                        s.remove();
+                    } else if (tid % 4 == 2) {
+                        s.remove(tid);
+                    }
+                    if (redundant_rm) {
+                        if (redundant_branch) {
+                            s.remove(tid);
+                        } else {
+                            s.remove();
+                        }
+                    }
+
+                    b.arrive_and_wait(); // 4
+
+                    ret = f.read();
+                    EXPECT_TRUE(ret.has_value());
+                    EXPECT_EQ(ret.value(), "foo");
+                });
+            }
+
+            b.arrive_and_wait(); // 1
+            for (auto tid : tids) {
+                if (tid % 3 == 2) {
+                    // threads themselves add <tid> % 3 \in {0, 1}
+                    s.add(tid);
+                }
+                if (redundant_op(rnd_eng)) {
+                    if (redundant_op(rnd_eng)) {
+                        s.add(tid);
+                    } else {
+                        s.add();
+                    }
+                }
+            }
+            b.arrive_and_wait(); // 2
+            b.arrive_and_wait(); // 3
+            for (auto tid : tids) {
+                if (tid % 4 == 0) {
+                    // threads themselves add <tid> % 4 \in {1, 2}
+                    // no one removes <tid> % 4 == 3
+                    s.remove(tid);
+                }
+                if (redundant_op(rnd_eng)) {
+                    if (redundant_op(rnd_eng)) {
+                        s.remove(tid);
+                    } else {
+                        s.remove();
+                    }
+                }
+            }
+            b.arrive_and_wait(); // 4
+
+            for (auto& t : thds) t.join();
+        };
+    }
 }
