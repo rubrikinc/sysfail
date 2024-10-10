@@ -71,7 +71,6 @@ namespace sysfail {
     struct ActiveSession {
         ActivePlan plan;
         AddrRange self_text;
-        volatile char on;
         std::random_device rd;
         ThdSt thd_st;
 
@@ -81,6 +80,9 @@ namespace sysfail {
 
         void rearm();
 
+        // These routines should never be used directly to add or remove
+        // threads being sys-failed. Use Session::add() and Session::remove().
+        // Using this directly would break Session teardown.
         void thd_enable();
 
         void thd_disable();
@@ -90,12 +92,6 @@ namespace sysfail {
         void thd_disable(pid_t tid);
 
         void fail_maybe(ucontext_t *ctx);
-
-    // TODO: refactor to support adding / removing other threads
-    //   private:
-    //     void thd_enable(pid_t tid);
-
-    //     void thd_disable(pid_t tid);
     };
 
     std::shared_ptr<ActiveSession> session = nullptr;

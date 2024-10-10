@@ -75,16 +75,12 @@ sysfail::ActiveSession::ActiveSession(
     const Plan& _plan,
     AddrRange&& _self_addr
 ) : plan(_plan), self_text(_self_addr) {
-    on = SYSCALL_DISPATCH_FILTER_ALLOW;
-
     enable_handler(SIGSYS, handle_sigsys);
     enable_handler(SIG_REARM, reenable_sysfail);
     enable_handler(SIG_ENABLE, enable_sysfail);
     enable_handler(SIG_DISABLE, disable_sysfail);
 
     thd_enable(); // TODO: enable for all threads
-
-    on = SYSCALL_DISPATCH_FILTER_BLOCK;
 }
 
 pid_t sysfail::ActiveSession::disarm() {
@@ -352,9 +348,9 @@ sysfail::Session::Session(const Plan& _plan) {
 }
 
 sysfail::Session::~Session() {
-    std::unique_lock<std::shared_mutex> l(lck);
     auto s = session;
     if (s) {
+        std::unique_lock<std::shared_mutex> l(lck);
         std::vector<pid_t> tids;
         for(ThdSt::iterator i = s->thd_st.begin(); i != s->thd_st.end(); ++i) {
             tids.push_back(i->first);
@@ -362,6 +358,7 @@ sysfail::Session::~Session() {
         for (auto tid : tids) {
             s->thd_disable(tid);
         }
+        assert(s->thd_st.empty());
         session.reset();
     }
 }
