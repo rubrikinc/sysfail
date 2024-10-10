@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <cstring>
 #include <regex>
+#include <barrier>
 
 #include "cisq.hh"
 
@@ -356,5 +357,70 @@ namespace sysfail {
         EXPECT_LT(eio_count + einval_count, efault_count);
         EXPECT_GT(2 * (eio_count + einval_count), efault_count);
         EXPECT_EQ(1000, eio_count + einval_count + efault_count);
+    }
+
+    TEST(SysFail, StopFailureInjectionOnOtherThreads) {
+        TmpFile f;
+        f.write("foo");
+
+        auto test_thd = gettid();
+
+        sysfail::Plan p(
+            {
+                {SYS_read, {1.0, 0, 0us, {{EIO, 1}}}},
+            },
+            [](pid_t tid) {
+                return true;
+            }
+        );
+
+        {
+            Session s(p);
+
+            auto ret = f.read();
+            EXPECT_FALSE(ret.has_value());
+
+            std::barrier b(2);
+
+            pid_t main_tid = gettid();
+
+            std::atomic<pid_t> thd_tid = 0;
+
+            std::thread t([&]() {
+                thd_tid = gettid();
+
+                auto ret = f.read();
+                EXPECT_TRUE(ret.has_value());
+                EXPECT_EQ(ret.value(), "foo");
+
+                b.arrive_and_wait(); // 1
+                b.arrive_and_wait(); // 2
+
+                ret = f.read();
+                EXPECT_FALSE(ret.has_value());
+
+                s.remove(main_tid);
+                b.arrive_and_wait(); // 3
+                b.arrive_and_wait(); // 4
+
+                ret = f.read();
+                EXPECT_TRUE(ret.has_value());
+                EXPECT_EQ(ret.value(), "foo");
+            });
+
+            b.arrive_and_wait(); // 1
+            s.add(thd_tid);
+            b.arrive_and_wait(); // 2
+
+            b.arrive_and_wait(); // 3
+            ret = f.read();
+            EXPECT_TRUE(ret.has_value());
+            EXPECT_EQ(ret.value(), "foo");
+
+            s.remove(thd_tid);
+            b.arrive_and_wait(); // 4
+
+            t.join();
+        };
     }
 }

@@ -30,7 +30,9 @@ namespace sysfail {
     void continue_syscall(ucontext_t *ctx);
 
     static void handle_sigsys(int sig, siginfo_t *info, void *ucontext);
+    static void reenable_sysfail(int sig, siginfo_t *info, void *ucontext);
     static void enable_sysfail(int sig, siginfo_t *info, void *ucontext);
+    static void disable_sysfail(int sig, siginfo_t *info, void *ucontext);
 
     struct ActiveOutcome {
         double fail_p;
@@ -55,12 +57,16 @@ namespace sysfail {
 
     struct ThdState {
         char on;
+        std::binary_semaphore sig_coord; // for signal handler coordination
+
+        ThdState() : on(SYSCALL_DISPATCH_FILTER_ALLOW), sig_coord(1) {}
     };
 
     using ThdSt = oneapi::tbb::concurrent_hash_map<pid_t, ThdState>;
 
-    const int SIG_ARM = SIGRTMIN + 4;
-    const int SIG_REARM = SIGRTMIN + 5;
+    const int SIG_ENABLE = SIGRTMIN + 4;
+    const int SIG_DISABLE = SIGRTMIN + 5;
+    const int SIG_REARM = SIGRTMIN + 6;
 
     struct ActiveSession {
         ActivePlan plan;
@@ -78,6 +84,10 @@ namespace sysfail {
         void thd_enable();
 
         void thd_disable();
+
+        void thd_enable(pid_t tid);
+
+        void thd_disable(pid_t tid);
 
         void fail_maybe(ucontext_t *ctx);
 

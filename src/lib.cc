@@ -78,7 +78,9 @@ sysfail::ActiveSession::ActiveSession(
     on = SYSCALL_DISPATCH_FILTER_ALLOW;
 
     enable_handler(SIGSYS, handle_sigsys);
-    enable_handler(SIG_REARM, enable_sysfail);
+    enable_handler(SIG_REARM, reenable_sysfail);
+    enable_handler(SIG_ENABLE, enable_sysfail);
+    enable_handler(SIG_DISABLE, disable_sysfail);
 
     thd_enable(); // TODO: enable for all threads
 
@@ -100,17 +102,11 @@ void sysfail::ActiveSession::rearm() {
     a->second.on = SYSCALL_DISPATCH_FILTER_BLOCK;
 }
 
-void sysfail::ActiveSession::thd_enable() {
+static void enable(
+    const sysfail::AddrRange& self_text,
+    sysfail::ThdSt::accessor& a
+) {
     auto tid = gettid();
-    if (!plan.selector(tid)) {
-        // std::cerr << "Not enabling sysfail for " << pid << "\n";
-        return;
-    }
-
-    ThdSt::accessor a;
-    thd_st.insert(a, tid);
-    a->second.on = SYSCALL_DISPATCH_FILTER_ALLOW;
-
     auto ret = prctl(
         PR_SET_SYSCALL_USER_DISPATCH,
         PR_SYS_DISPATCH_ON,
@@ -120,22 +116,17 @@ void sysfail::ActiveSession::thd_enable() {
     if (ret == -1) {
         auto errStr = std::string(std::strerror(errno));
         std::cerr
-            << "Failed to enable sysfail for " << self_text.path
-            << ", err: " << errStr << "\n";
+            << "Failed to enable sysfail for " << tid << "\n";
         throw std::runtime_error("Failed to enable sysfail: " + errStr);
     }
 
     a->second.on = SYSCALL_DISPATCH_FILTER_BLOCK;
 }
 
-void sysfail::ActiveSession::thd_disable() {
-    auto tid = gettid();
-    ThdSt::accessor a;
-    thd_st.find(a, tid);
-
-    if (a.empty()) return; // idempotency OR !selector(tid) etc
-
-    a->second.on = SYSCALL_DISPATCH_FILTER_ALLOW;
+static void disable(
+    const sysfail::AddrRange& self_text,
+    sysfail::ThdSt::accessor& a
+) {
     auto ret = prctl(
         PR_SET_SYSCALL_USER_DISPATCH,
         PR_SYS_DISPATCH_OFF,
@@ -149,6 +140,71 @@ void sysfail::ActiveSession::thd_disable() {
             << ", err: " << errStr << "\n";
         throw std::runtime_error("Failed to disable sysfail: " + errStr);
     }
+    // caller must erase the thd-state
+}
+
+static void send_signal(pid_t tid, int sig) {
+    // TODO handle group-leader change (retry EINVAL)
+    auto ret = tgkill(getpid(), tid, sig);
+    assert(ret == 0);
+}
+
+void sysfail::ActiveSession::thd_enable(pid_t tid) {
+    ThdSt::accessor a;
+    thd_st.insert(a, tid);
+
+    auto& sem = a->second.sig_coord;
+    sem.acquire();
+    a.release();
+
+    send_signal(tid, SIG_ENABLE);
+
+    sem.acquire();
+    sem.release(); // leave sem in a re-usable state
+}
+
+void sysfail::ActiveSession::thd_disable(pid_t tid) {
+    sysfail::ThdSt::accessor a;
+    if (! thd_st.find(a, tid)) {
+        std::cerr << "No thread state for " << tid << "\n";
+        return;
+    }
+
+    auto& sem = a->second.sig_coord;
+    sem.acquire();
+    a.release();
+
+    send_signal(tid, SIG_DISABLE);
+
+    sem.acquire();
+    sem.release(); // leave sem in a re-usable state
+    assert(thd_st.find(a, tid));
+    thd_st.erase(a);
+}
+
+void sysfail::ActiveSession::thd_enable() {
+    auto tid = gettid();
+    if (!plan.selector(tid)) {
+        // std::cerr << "Not enabling sysfail for " << pid << "\n";
+        return;
+    }
+
+    ThdSt::accessor a;
+    thd_st.insert(a, tid);
+    a->second.on = SYSCALL_DISPATCH_FILTER_ALLOW;
+
+    enable(self_text, a);
+}
+
+void sysfail::ActiveSession::thd_disable() {
+    auto tid = gettid();
+    ThdSt::accessor a;
+    thd_st.find(a, tid);
+
+    if (a.empty()) return; // idempotency OR !selector(tid) etc
+
+    a->second.on = SYSCALL_DISPATCH_FILTER_ALLOW;
+    disable(self_text, a);
     thd_st.erase(a);
 }
 
@@ -190,14 +246,61 @@ namespace {
 }
 
 static void sysfail::enable_sysfail(int sig, siginfo_t *info, void *ucontext) {
+    {
+        auto s = session;
+        if (!s) {
+            std::cerr << "Can't enable sysfail, no active session\n";
+            return;
+        }
+
+        // Expect thread-state is initialized
+        auto tid = gettid();
+        sysfail::ThdSt::accessor a;
+
+        if (!s->thd_st.find(a, tid)) {
+            std::cerr << "Can't enable sysfail, no thread state\n";
+            return;
+        }
+
+        enable(s->self_text, a);
+        a->second.sig_coord.release();
+    }
+
     ucontext_t *ctx = (ucontext_t *)ucontext;
+    sysfail_restore(ctx->uc_mcontext.gregs);
+}
+
+static void sysfail::disable_sysfail(int sig, siginfo_t *info, void *ucontext) {
     auto s = session;
-    if (s) { s->rearm(); }
+    if (!s) {
+        std::cerr << "Can't disable sysfail, no active session\n";
+        return;
+    }
+
+    auto tid = gettid();
+    sysfail::ThdSt::accessor a;
+    if (! s->thd_st.find(a, tid)) {
+        std::cerr << "Can't disable sysfail, no thread state for "
+                  << tid << "\n";
+        return;
+    }
+
+    disable(s->self_text, a);
+    a->second.sig_coord.release();
+}
+
+static void sysfail::reenable_sysfail(int sig, siginfo_t *info, void *ucontext) {
+    ucontext_t *ctx = (ucontext_t *)ucontext;
+    {
+        auto s = session;
+        if (s) { s->rearm(); }
+    }
     sysfail_restore(ctx->uc_mcontext.gregs);
 }
 
 static void sysfail::handle_sigsys(int sig, siginfo_t *info, void *ucontext) {
     ucontext_t *ctx = (ucontext_t *)ucontext;
+    // TODO: free this on sysfail_restore
     auto s = session;
     auto syscall = ctx->uc_mcontext.gregs[REG_RAX];
 
@@ -214,9 +317,7 @@ static void sysfail::handle_sigsys(int sig, siginfo_t *info, void *ucontext) {
             if (cmd == SIG_BLOCK || cmd == SIG_SETMASK) {
                 auto tid = s->disarm();
                 continue_syscall(ctx);
-                // TODO handle group-leader change (retry EINVAL)
-                auto ret = tgkill(getpid(), tid, SIG_REARM);
-                assert(ret == 0);
+                send_signal(tid, SIG_REARM);
                 sysfail_restore(ctx->uc_mcontext.gregs);
                 assert(false);
             }
@@ -253,6 +354,14 @@ void sysfail::Session::add() {
 
 void sysfail::Session::remove() {
     session->thd_disable();
+}
+
+void sysfail::Session::add(pid_t tid) {
+    session->thd_enable(tid);
+}
+
+void sysfail::Session::remove(pid_t tid) {
+    session->thd_disable(tid);
 }
 
 extern "C" {
