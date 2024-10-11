@@ -16,6 +16,7 @@
 #include "map.hh"
 #include "syscall.hh"
 #include "log.hh"
+#include "signal.hh"
 
 extern "C" {
     extern void sysfail_restore(greg_t*);
@@ -49,25 +50,6 @@ sysfail::ActiveOutcome::ActiveOutcome(
 sysfail::ActivePlan::ActivePlan(const Plan& _plan) : selector(_plan.selector) {
     for (const auto& [call, o] : _plan.outcomes) {
         outcomes.insert({call, o});
-    }
-}
-
-void sysfail::enable_handler(signal_t signal, sigaction_t hdlr) {
-    struct sigaction action;
-    sigset_t mask;
-
-    memset(&action, 0, sizeof(action));
-    sigemptyset(&mask);
-
-    action.sa_sigaction = hdlr;
-    action.sa_flags = SA_SIGINFO | SA_NODEFER;
-    action.sa_mask = mask;
-
-    if (sigaction(signal, &action, nullptr) != 0) {
-        std::cerr
-            << "Failed to set new sigaction: "
-            << std::strerror(errno) << '\n';
-        throw std::runtime_error("Failed to set new sigaction");
     }
 }
 
@@ -174,11 +156,11 @@ void sysfail::ActiveSession::thd_enable(pid_t tid) {
 }
 
 void sysfail::ActiveSession::thd_disable(pid_t tid) {
-    sysfail::ThdSt::accessor a;
-    if (! thd_st.find(a, tid)) {
-        std::cerr << "No thread state for " << tid << "\n";
-        return;
-    }
+    sysfail::ThdSt::accessor a; // TODO: this deadlocks when two removals compete
+    // because signal-handler tries to acquire access too, fix this!
+    // Repro using:
+    // ./test/main --gtest_filter='*.ThreadAddRemoveIdempotence' --gtest_repeat=100
+    if (! thd_st.find(a, tid)) return; // idempotency check
     auto want = false;
     if (! a->second.being_removed.compare_exchange_strong(want, true)) {
         return; // idempotency check
@@ -213,7 +195,12 @@ void sysfail::ActiveSession::thd_enable() {
 void sysfail::ActiveSession::thd_disable() {
     auto tid = gettid();
     ThdSt::accessor a;
-    if (! thd_st.find(a, tid)) return;
+    if (! thd_st.find(a, tid)) return; // idempotency check
+
+    auto want = false;
+    if (! a->second.being_removed.compare_exchange_strong(want, true)) {
+        return; // idempotency check
+    }
 
     a->second.on = SYSCALL_DISPATCH_FILTER_ALLOW;
     disable(self_text, a);

@@ -8,6 +8,8 @@ add_library(sysfail SHARED
     map.cc
     log.cc
     syscall.cc
+    thdmon.cc
+    signal.cc
     restore.S
 )
 

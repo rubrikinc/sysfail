@@ -50,11 +50,6 @@ namespace sysfail {
         ActivePlan(const Plan& _plan);
     };
 
-    using signal_t = int;
-    using sigaction_t = void (*) (int, siginfo_t *, void *);
-
-    void enable_handler(signal_t signal, sigaction_t hdlr);
-
     struct ThdState {
         char on;
         std::atomic<bool> being_removed;

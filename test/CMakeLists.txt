@@ -11,6 +11,7 @@ target_include_directories(sysfail PUBLIC ${CMAKE_SOURCE_DIR}/include)
 add_executable(main
     lib_test.cc
     map_test.cc
+    thdmon_test.cc
 )
 
 # Include the top-level include directory for shared headers
