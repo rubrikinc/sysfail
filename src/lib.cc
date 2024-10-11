@@ -128,7 +128,14 @@ static void send_signal(pid_t tid, int sig, sysfail::ThdState* st) {
     info.si_uid = getuid();
     info.si_value = { .sival_ptr = reinterpret_cast<void*>(st) };
 
-    auto ret = sysfail::syscall(getpid(), tid, sig, reinterpret_cast<uint64_t>(&info), 0, 0, SYS_rt_tgsigqueueinfo);
+    auto ret = sysfail::syscall(
+        pid,
+        tid,
+        sig,
+        reinterpret_cast<uint64_t>(&info),
+        0,
+        0,
+        SYS_rt_tgsigqueueinfo);
     if (ret < 0) {
         if (ret == -ESRCH) {
             // the thread died without telling us it was dying but we don't want
@@ -148,7 +155,6 @@ void sysfail::ActiveSession::thd_enable(pid_t tid) {
 
     auto& st = a->second;
     st.sig_coord.acquire();
-    a.release();
 
     send_signal(tid, SIG_ENABLE, &st);
 
@@ -159,20 +165,14 @@ void sysfail::ActiveSession::thd_enable(pid_t tid) {
 void sysfail::ActiveSession::thd_disable(pid_t tid) {
     sysfail::ThdSt::accessor a;
     if (! thd_st.find(a, tid)) return; // idempotency check
-    auto want = false;
-    if (! a->second.being_removed.compare_exchange_strong(want, true)) {
-        return; // idempotency check
-    }
 
     auto& st = a->second;
     st.sig_coord.acquire();
-    a.release();
 
     send_signal(tid, SIG_DISABLE, &st);
 
     st.sig_coord.acquire();
     st.sig_coord.release(); // leave sem in a re-usable state
-    assert(thd_st.find(a, tid));
     thd_st.erase(a);
 }
 
@@ -194,11 +194,6 @@ void sysfail::ActiveSession::thd_disable() {
     auto tid = gettid();
     ThdSt::accessor a;
     if (! thd_st.find(a, tid)) return; // idempotency check
-
-    auto want = false;
-    if (! a->second.being_removed.compare_exchange_strong(want, true)) {
-        return; // idempotency check
-    }
 
     a->second.on = SYSCALL_DISPATCH_FILTER_ALLOW;
     disable();

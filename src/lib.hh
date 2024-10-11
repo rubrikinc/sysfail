@@ -52,12 +52,10 @@ namespace sysfail {
 
     struct ThdState {
         char on;
-        std::atomic<bool> being_removed;
         std::binary_semaphore sig_coord; // for signal handler coordination
 
         ThdState() :
             on(SYSCALL_DISPATCH_FILTER_ALLOW),
-            being_removed(false),
             sig_coord(1) {}
     };
 
