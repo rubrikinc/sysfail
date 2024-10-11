@@ -85,7 +85,7 @@ void sysfail::ActiveSession::rearm() {
 
 static void enable(
     const sysfail::AddrRange& self_text,
-    sysfail::ThdSt::accessor& a
+    sysfail::ThdState* st
 ) {
     auto tid = gettid();
     auto ret = prctl(
@@ -93,7 +93,7 @@ static void enable(
         PR_SYS_DISPATCH_ON,
         self_text.start,
         self_text.length,
-        &a->second.on);
+        &st->on);
     if (ret == -1) {
         auto errStr = std::string(std::strerror(errno));
         std::cerr
@@ -101,13 +101,10 @@ static void enable(
         throw std::runtime_error("Failed to enable sysfail: " + errStr);
     }
 
-    a->second.on = SYSCALL_DISPATCH_FILTER_BLOCK;
+    st->on = SYSCALL_DISPATCH_FILTER_BLOCK;
 }
 
-static void disable(
-    const sysfail::AddrRange& self_text,
-    sysfail::ThdSt::accessor& a
-) {
+static void disable() {
     auto ret = prctl(
         PR_SET_SYSCALL_USER_DISPATCH,
         PR_SYS_DISPATCH_OFF,
@@ -116,26 +113,30 @@ static void disable(
         0);
     if (ret == -1) {
         auto errStr = std::string(std::strerror(errno));
-        std::cerr
-            << "Failed to disable sysfail for " << self_text.path
-            << ", err: " << errStr << "\n";
+        std::cerr << "Failed to disable sysfail, err: " << errStr << "\n";
         throw std::runtime_error("Failed to disable sysfail: " + errStr);
     }
     // caller must erase the thd-state
 }
 
-static void send_signal(pid_t tid, int sig, std::binary_semaphore* sem) {
-    // TODO handle group-leader change (retry EINVAL)
-    auto ret = sysfail::syscall(getpid(), tid, sig, 0, 0, 0, SYS_tgkill);
+static void send_signal(pid_t tid, int sig, sysfail::ThdState* st) {
+    auto pid = getpid();
+    siginfo_t info;
+    memset(&info, 0, sizeof(info));
+    info.si_code = SI_QUEUE;
+    info.si_pid = pid;
+    info.si_uid = getuid();
+    info.si_value = { .sival_ptr = reinterpret_cast<void*>(st) };
+
+    auto ret = sysfail::syscall(getpid(), tid, sig, reinterpret_cast<uint64_t>(&info), 0, 0, SYS_rt_tgsigqueueinfo);
     if (ret < 0) {
         if (ret == -ESRCH) {
             // the thread died without telling us it was dying but we don't want
             // to deadlock so we release
-            if (sem) sem->release();
+            if (st) st->sig_coord.release();
             return;
         }
     }
-
     assert(ret == 0);
 }
 
@@ -145,35 +146,32 @@ void sysfail::ActiveSession::thd_enable(pid_t tid) {
     ThdSt::accessor a;
     if (! thd_st.insert(a, tid)) return; // idempotency check
 
-    auto& sem = a->second.sig_coord;
-    sem.acquire();
+    auto& st = a->second;
+    st.sig_coord.acquire();
     a.release();
 
-    send_signal(tid, SIG_ENABLE, &sem);
+    send_signal(tid, SIG_ENABLE, &st);
 
-    sem.acquire();
-    sem.release(); // leave sem in a re-usable state
+    st.sig_coord.acquire();
+    st.sig_coord.release(); // leave sem in a re-usable state
 }
 
 void sysfail::ActiveSession::thd_disable(pid_t tid) {
-    sysfail::ThdSt::accessor a; // TODO: this deadlocks when two removals compete
-    // because signal-handler tries to acquire access too, fix this!
-    // Repro using:
-    // ./test/main --gtest_filter='*.ThreadAddRemoveIdempotence' --gtest_repeat=100
+    sysfail::ThdSt::accessor a;
     if (! thd_st.find(a, tid)) return; // idempotency check
     auto want = false;
     if (! a->second.being_removed.compare_exchange_strong(want, true)) {
         return; // idempotency check
     }
 
-    auto& sem = a->second.sig_coord;
-    sem.acquire();
+    auto& st = a->second;
+    st.sig_coord.acquire();
     a.release();
 
-    send_signal(tid, SIG_DISABLE, &sem);
+    send_signal(tid, SIG_DISABLE, &st);
 
-    sem.acquire();
-    sem.release(); // leave sem in a re-usable state
+    st.sig_coord.acquire();
+    st.sig_coord.release(); // leave sem in a re-usable state
     assert(thd_st.find(a, tid));
     thd_st.erase(a);
 }
@@ -188,7 +186,7 @@ void sysfail::ActiveSession::thd_enable() {
     ThdSt::accessor a;
     if (thd_st.insert(a, tid)) {
         a->second.on = SYSCALL_DISPATCH_FILTER_ALLOW;
-        enable(self_text, a);
+        enable(self_text, &a->second);
     }
 }
 
@@ -203,7 +201,7 @@ void sysfail::ActiveSession::thd_disable() {
     }
 
     a->second.on = SYSCALL_DISPATCH_FILTER_ALLOW;
-    disable(self_text, a);
+    disable();
     thd_st.erase(a);
 }
 
@@ -253,16 +251,10 @@ static void sysfail::enable_sysfail(int sig, siginfo_t *info, void *ucontext) {
         }
 
         // Expect thread-state is initialized
-        auto tid = gettid();
-        sysfail::ThdSt::accessor a;
+        auto st = reinterpret_cast<sysfail::ThdState*>(info->si_value.sival_ptr);
 
-        if (!s->thd_st.find(a, tid)) {
-            std::cerr << "Can't enable sysfail, no thread state\n";
-            return;
-        }
-
-        enable(s->self_text, a);
-        a->second.sig_coord.release();
+        enable(s->self_text, st);
+        st->sig_coord.release();
     }
 
     ucontext_t *ctx = (ucontext_t *)ucontext;
@@ -276,16 +268,10 @@ static void sysfail::disable_sysfail(int sig, siginfo_t *info, void *ucontext) {
         return;
     }
 
-    auto tid = gettid();
-    sysfail::ThdSt::accessor a;
-    if (! s->thd_st.find(a, tid)) {
-        std::cerr << "Can't disable sysfail, no thread state for "
-                  << tid << "\n";
-        return;
-    }
+    auto st = reinterpret_cast<sysfail::ThdState*>(info->si_value.sival_ptr);
 
-    disable(s->self_text, a);
-    a->second.sig_coord.release();
+    disable();
+    st->sig_coord.release();
 }
 
 static void sysfail::reenable_sysfail(int sig, siginfo_t *info, void *ucontext) {
