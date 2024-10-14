@@ -9,6 +9,7 @@
 #include <regex>
 #include <barrier>
 #include <thread>
+#include <cmath>
 #include <oneapi/tbb/concurrent_vector.h>
 
 #include "cisq.hh"
@@ -96,5 +97,86 @@ namespace sysfail {
 
             for (auto& t : thds) t.join();
         };
+    }
+
+    TEST(Lib_ThdMon, DiscoversAndFailureInjectsAllThreads) {
+        TmpFile f;
+        f.write("foo");
+
+        auto test_thd = gettid();
+
+        auto poll_dur = 1ms;
+
+        std::random_device rd;
+        thread_local std::mt19937 rnd_eng(rd());
+
+        sysfail::Plan p(
+            { {SYS_read, {1.0, 0, 0us, {{EIO, 1}}}} },
+            [test_thd](pid_t tid) { return tid % 2 == 0 && tid != test_thd; },
+            thread_discovery::ProcPoll(poll_dur));
+
+        int thd_count = 40;
+        std::uniform_int_distribution<int> delay_ms(0, 10);
+        auto session_starter = ceil(
+            std::normal_distribution<double>{
+                static_cast<double>(thd_count / 2), // mean
+                static_cast<double>(thd_count / 10) // sd
+             }(rnd_eng));
+
+        std::barrier b(thd_count + 1);
+
+        struct {
+            std::mutex m;
+            std::condition_variable cv;
+            std::unique_ptr<Session> inst;
+        } session;
+
+        std::vector<std::thread> thds;
+
+        for (int i = 0; i < thd_count; i++) {
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(delay_ms(rnd_eng)));
+
+            thds.emplace_back([&]() {
+                if (i == session_starter) {
+                    std::unique_lock<std::mutex> l(session.m);
+                    session.inst = std::make_unique<Session>(p);
+                    session.cv.notify_all();
+                } else {
+                    std::unique_lock<std::mutex> l(session.m);
+                    if (session.inst == nullptr) {
+                        session.cv.wait(
+                            l,
+                            [&]() { return session.inst != nullptr; });
+                    }
+                }
+
+                // wait long enough for poller to discover the thread
+                std::this_thread::sleep_for(5ms);
+
+                auto tid = gettid();
+
+                auto ret = f.read();
+                if (tid % 2 == 0) {
+                    EXPECT_FALSE(ret.has_value());
+                } else {
+                    EXPECT_TRUE(ret.has_value());
+                    EXPECT_EQ(ret.value(), "foo");
+                }
+
+                b.arrive_and_wait(); // 1
+                b.arrive_and_wait(); // 2
+
+                ret = f.read();
+                EXPECT_TRUE(ret.has_value());
+                EXPECT_EQ(ret.value(), "foo");
+            });
+        }
+
+        b.arrive_and_wait(); // 1
+        session.inst.reset();
+        b.arrive_and_wait(); // 2
+
+        for (auto& t : thds) t.join();
     }
 }
