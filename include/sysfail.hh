@@ -7,10 +7,14 @@
 #include <functional>
 #include <shared_mutex>
 #include <sys/syscall.h>
+#include <chrono>
+#include <variant>
+#include <signal.h>
 
 namespace sysfail {
     using Syscall = int;
     using Errno = int;
+    using Signal = int;
 
     struct Outcome {
         double fail_probability;
@@ -20,17 +24,41 @@ namespace sysfail {
     };
 
     struct AddrRange;
+
+    namespace thread_discovery {
+        using namespace std::chrono_literals;
+
+        // Poll /proc/<pid>/task every itvl
+        struct ProcPoll {
+            const std::chrono::microseconds itvl;
+
+            ProcPoll( std::chrono::microseconds itvl = 10ms) : itvl(itvl) {}
+        };
+
+        // Either add / remove threads manually or use Session API to trigger a
+        // single isolated poll of /proc/<pid>/task
+        struct None {};
+
+        using Strategy = std::variant<ProcPoll, None>;
+    }
+
     struct Plan {
         const std::unordered_map<Syscall, const Outcome> outcomes;
         const std::function<bool(pid_t)> selector;
+        const thread_discovery::Strategy thd_disc;
         Plan(
-            const std::unordered_map<Syscall, const Outcome>& _outcomes,
-            const std::function<bool(pid_t)>& _selector
-        ) : outcomes(_outcomes), selector(_selector) {}
-        Plan(Plan&& _plan):
-            outcomes(_plan.outcomes),
-            selector(_plan.selector) {}
-        Plan() : outcomes({}), selector([](pid_t) { return false; }) {}
+            const std::unordered_map<Syscall, const Outcome>& outcomes,
+            const std::function<bool(pid_t)>& selector,
+            const thread_discovery::Strategy& thd_disc
+        ) : outcomes(outcomes), selector(selector), thd_disc(thd_disc) {}
+        Plan(const Plan& plan):
+            outcomes(plan.outcomes),
+            selector(plan.selector),
+            thd_disc(plan.thd_disc) {}
+        Plan() :
+            outcomes({}),
+            selector([](pid_t) { return false; }),
+            thd_disc(thread_discovery::None{}) {}
     };
 
     struct Stats{

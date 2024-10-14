@@ -37,13 +37,9 @@ namespace sysfail {
         tFile.write("foo bar baz quux");
 
         sysfail::Plan p(
-            {
-                {SYS_read, {1.0, 0, 0us, {{EIO, 1.0}}}}
-            },
-            [](pid_t pid) {
-                return true;
-            }
-        );
+            { {SYS_read, {1.0, 0, 0us, {{EIO, 1.0}}}} },
+            [](pid_t pid) { return true; },
+            thread_discovery::None{});
 
         sysfail::Session s(p);
         auto success = 0;
@@ -62,14 +58,10 @@ namespace sysfail {
         tFile.write("foo bar baz quux");
 
         sysfail::Plan p(
-            {
-                {SYS_read, {0.33, 0, 0us, {{EIO, 1.0}}}},
-                {SYS_openat, {0.25, 0, 0us, {{EINVAL, 1.0}}}}
-            },
-            [](pid_t pid) {
-                return true;
-            }
-        );
+            { {SYS_read, {0.33, 0, 0us, {{EIO, 1.0}}}},
+              {SYS_openat, {0.25, 0, 0us, {{EINVAL, 1.0}}}}},
+            [](pid_t pid) { return true; },
+            thread_discovery::None{});
 
         {
             sysfail::Session s(p);
@@ -105,14 +97,10 @@ namespace sysfail {
         TmpFile tFile;
 
         sysfail::Plan p(
-            {
-                {SYS_read, {0, 0.5, 10ms, {}}},
-                {SYS_write, {0, 0, 0ms, {}}}
-            },
-            [](pid_t pid) {
-                return true;
-            }
-        );
+            { {SYS_read, {0, 0.5, 10ms, {}}},
+              {SYS_write, {0, 0, 0ms, {}}} },
+            [](pid_t pid) { return true; },
+            thread_discovery::None{});
 
         {
             sysfail::Session s(p);
@@ -152,15 +140,11 @@ namespace sysfail {
         auto test_thd = gettid();
 
         sysfail::Plan p(
-            {
-                {SYS_read, {0.33, 0, 0us, {{EIO, 1.0}}}},
-                {SYS_openat, {0.25, 0, 0us, {{EINVAL, 1.0}}}},
-                {SYS_write, {0.8, 0, 0us, {{EINVAL, 1.0}}}}
-            },
-            [test_thd](pid_t tid) {
-                return tid % 2 == 0 && tid != test_thd;
-            }
-        );
+            { {SYS_read, {0.33, 0, 0us, {{EIO, 1.0}}}},
+              {SYS_openat, {0.25, 0, 0us, {{EINVAL, 1.0}}}},
+              {SYS_write, {0.8, 0, 0us, {{EINVAL, 1.0}}}}},
+            [test_thd](pid_t tid) { return tid % 2 == 0 && tid != test_thd; },
+            thread_discovery::None{});
 
         const auto thds = 10;
         const auto attempts = 1000;
@@ -268,13 +252,9 @@ namespace sysfail {
         auto test_thd = gettid();
 
         sysfail::Plan p(
-            {
-                {SYS_read, {1.0, 0, 0us, {{EIO, 1.0}}}},
-            },
-            [](pid_t tid) {
-                return true;
-            }
-        );
+            { {SYS_read, {1.0, 0, 0us, {{EIO, 1.0}}}} },
+            [](pid_t tid) { return true; },
+            thread_discovery::None{});
 
         std::binary_semaphore chk_sem(1), start_sem(1);
 
@@ -319,13 +299,10 @@ namespace sysfail {
         auto test_thd = gettid();
 
         sysfail::Plan p(
-            {
-                {SYS_read, {1.0, 0, 0us, {{EIO, 0.1}, {EINVAL, 0.3}, {EFAULT, 0.6}}}},
-            },
-            [](pid_t tid) {
-                return true;
-            }
-        );
+            { { SYS_read,
+                {1.0, 0, 0us, {{EIO, 0.1}, {EINVAL, 0.3}, {EFAULT, 0.6}}}} },
+            [](pid_t tid) { return true; },
+            thread_discovery::None{});
 
         std::unordered_map<std::string, int> error_count;
 
@@ -367,13 +344,9 @@ namespace sysfail {
         auto test_thd = gettid();
 
         sysfail::Plan p(
-            {
-                {SYS_read, {1.0, 0, 0us, {{EIO, 1}}}},
-            },
-            [](pid_t tid) {
-                return true;
-            }
-        );
+            { {SYS_read, {1.0, 0, 0us, {{EIO, 1}}}} },
+            [](pid_t tid) { return true; },
+            thread_discovery::None{});
 
         {
             Session s(p);
@@ -432,13 +405,9 @@ namespace sysfail {
         auto test_thd = gettid();
 
         sysfail::Plan p(
-            {
-                {SYS_read, {1.0, 0, 0us, {{EIO, 1}}}},
-            },
-            [](pid_t tid) {
-                return tid % 2 == 0;
-            }
-        );
+            { {SYS_read, {1.0, 0, 0us, {{EIO, 1}}}} },
+            [](pid_t tid) { return tid % 2 == 0; },
+            thread_discovery::None{});
 
         {
             Session s(p);
@@ -514,13 +483,9 @@ namespace sysfail {
         auto test_thd = gettid();
 
         sysfail::Plan p(
-            {
-                {SYS_read, {1.0, 0, 0us, {{EIO, 1}}}},
-            },
-            [](pid_t tid) {
-                return tid % 2 == 0;
-            }
-        );
+            { {SYS_read, {1.0, 0, 0us, {{EIO, 1}}}} },
+            [](pid_t tid) { return tid % 2 == 0; },
+            thread_discovery::None{});
 
         {
             std::random_device rd;

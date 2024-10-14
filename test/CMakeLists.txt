@@ -12,6 +12,7 @@ add_executable(main
     lib_test.cc
     map_test.cc
     thdmon_test.cc
+    lib_thdmon_test.cc
 )
 
 # Include the top-level include directory for shared headers

@@ -21,6 +21,7 @@
 #include "map.hh"
 #include "syscall.hh"
 #include "log.hh"
+#include "thdmon.hh"
 
 extern "C" {
     extern void sysfail_restore(greg_t*);
@@ -44,8 +45,8 @@ namespace sysfail {
     };
 
     struct ActivePlan {
+        const Plan p;
         std::unordered_map<Syscall, const ActiveOutcome> outcomes;
-        const std::function<bool(pid_t)> selector;
 
         ActivePlan(const Plan& _plan);
     };
@@ -70,8 +71,13 @@ namespace sysfail {
         AddrRange self_text;
         std::random_device rd;
         ThdSt thd_st;
+        std::unique_ptr<ThdMon> tmon;
 
         ActiveSession(const Plan& _plan, AddrRange&& _self_addr);
+
+        // Some procedures (sig-handlers etc) require the global-session to be
+        // defined, so first define the global session and then initialize it.
+        void initialize();
 
         pid_t disarm();
 
@@ -89,6 +95,8 @@ namespace sysfail {
         void thd_disable(pid_t tid);
 
         void fail_maybe(ucontext_t *ctx);
+
+        void thd_track(pid_t tid, DiscThdSt state);
     };
 
     std::shared_ptr<ActiveSession> session = nullptr;

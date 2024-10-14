@@ -3,27 +3,38 @@
 
 #include <functional>
 #include <thread>
+#include <condition_variable>
+#include <semaphore>
 
 #include "signal.hh"
+#include "sysfail.hh"
 
 namespace sysfail {
-    enum class ThdSt {
+    enum class DiscThdSt { // discovered thread state
         Self,
         Existing,
         Spawned,
         Terminated
     };
 
-    using ThdEvtHdlr = std::function<void(pid_t, ThdSt)>;
+    using ThdEvtHdlr = std::function<void(pid_t, DiscThdSt)>;
 
     class ThdMon {
         const pid_t pid;
         const std::chrono::microseconds poll_itvl;
-        std::thread thd;
-        std::atomic<bool> run = true;
+        std::thread poller_thd;
+        std::binary_semaphore poll_initialized{0};
+        struct {
+            std::mutex stop_mtx;
+            std::condition_variable stop_cv;
+            bool stop = false;
+        } stop_ctrl;
         void process(ThdEvtHdlr handler);
     public:
-        ThdMon(pid_t pid, std::chrono::microseconds poll_itvl, ThdEvtHdlr handler);
+        ThdMon(
+            pid_t pid,
+            const thread_discovery::ProcPoll& config,
+            ThdEvtHdlr handler);
         ~ThdMon();
     };
 }

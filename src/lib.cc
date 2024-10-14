@@ -8,6 +8,7 @@
 #include <csignal>
 #include <random>
 #include <thread>
+#include <functional>
 #include <linux/unistd.h>
 
 #include "sysfail.hh"
@@ -17,10 +18,14 @@
 #include "syscall.hh"
 #include "log.hh"
 #include "signal.hh"
+#include "helpers.hh"
 
 extern "C" {
     extern void sysfail_restore(greg_t*);
 }
+
+using namespace std::placeholders;
+using namespace std::chrono_literals;
 
 void sysfail::continue_syscall(ucontext_t *ctx) {
     auto rax = syscall(
@@ -47,8 +52,8 @@ sysfail::ActiveOutcome::ActiveOutcome(
     }
 }
 
-sysfail::ActivePlan::ActivePlan(const Plan& _plan) : selector(_plan.selector) {
-    for (const auto& [call, o] : _plan.outcomes) {
+sysfail::ActivePlan::ActivePlan(const Plan& p) : p(p) {
+    for (const auto& [call, o] : p.outcomes) {
         outcomes.insert({call, o});
     }
 }
@@ -61,8 +66,45 @@ sysfail::ActiveSession::ActiveSession(
     enable_handler(SIG_REARM, reenable_sysfail);
     enable_handler(SIG_ENABLE, enable_sysfail);
     enable_handler(SIG_DISABLE, disable_sysfail);
+}
 
-    thd_enable(); // TODO: enable for all threads
+void sysfail::ActiveSession::initialize() {
+    auto mk_tmon = [&](std::chrono::microseconds itvl) {
+        return std::make_unique<sysfail::ThdMon>(
+            getpid(),
+            itvl,
+            std::bind(&ActiveSession::thd_track, this, _1, _2));
+    };
+
+     tmon = std::visit(cases {
+        [&](const thread_discovery::ProcPoll& p) -> std::unique_ptr<sysfail::ThdMon> {
+            return mk_tmon(p.itvl);
+        },
+        [&](const thread_discovery::None& _) -> std::unique_ptr<sysfail::ThdMon> {
+             // std::chrono::microseconds::max() wakes up immediately :-(
+            return mk_tmon(10000h);
+        },
+        [](const auto&) -> std::unique_ptr<sysfail::ThdMon> {
+            throw std::runtime_error("Unknown thread discovery strategy");
+        }},
+        plan.p.thd_disc);
+}
+
+void sysfail::ActiveSession::thd_track(pid_t tid, sysfail::DiscThdSt state) {
+    switch (state) {
+        case DiscThdSt::Self:
+            // ignore, this is thd-mon's own thread
+            break;
+        case DiscThdSt::Existing:
+            thd_enable(tid);
+            break;
+        case DiscThdSt::Spawned:
+            thd_enable(tid);
+            break;
+        case DiscThdSt::Terminated:
+            thd_disable(tid);
+            break;
+    }
 }
 
 pid_t sysfail::ActiveSession::disarm() {
@@ -119,36 +161,8 @@ static void disable() {
     // caller must erase the thd-state
 }
 
-static void send_signal(pid_t tid, int sig, sysfail::ThdState* st) {
-    auto pid = getpid();
-    siginfo_t info;
-    memset(&info, 0, sizeof(info));
-    info.si_code = SI_QUEUE;
-    info.si_pid = pid;
-    info.si_uid = getuid();
-    info.si_value = { .sival_ptr = reinterpret_cast<void*>(st) };
-
-    auto ret = sysfail::syscall(
-        pid,
-        tid,
-        sig,
-        reinterpret_cast<uint64_t>(&info),
-        0,
-        0,
-        SYS_rt_tgsigqueueinfo);
-    if (ret < 0) {
-        if (ret == -ESRCH) {
-            // the thread died without telling us it was dying but we don't want
-            // to deadlock so we release
-            if (st) st->sig_coord.release();
-            return;
-        }
-    }
-    assert(ret == 0);
-}
-
 void sysfail::ActiveSession::thd_enable(pid_t tid) {
-    if (! plan.selector(tid)) return; // TODO: log
+    if (! plan.p.selector(tid)) return; // TODO: log
 
     ThdSt::accessor a;
     if (! thd_st.insert(a, tid)) return; // idempotency check
@@ -156,7 +170,11 @@ void sysfail::ActiveSession::thd_enable(pid_t tid) {
     auto& st = a->second;
     st.sig_coord.acquire();
 
-    send_signal(tid, SIG_ENABLE, &st);
+    send_signal<ThdState>(
+        tid,
+        SIG_ENABLE,
+        &st,
+        [](auto* st) { st->sig_coord.release(); });
 
     st.sig_coord.acquire();
     st.sig_coord.release(); // leave sem in a re-usable state
@@ -169,7 +187,11 @@ void sysfail::ActiveSession::thd_disable(pid_t tid) {
     auto& st = a->second;
     st.sig_coord.acquire();
 
-    send_signal(tid, SIG_DISABLE, &st);
+    send_signal<ThdState>(
+        tid,
+        SIG_DISABLE,
+        &st,
+        [](auto* st) { st->sig_coord.release(); });
 
     st.sig_coord.acquire();
     st.sig_coord.release(); // leave sem in a re-usable state
@@ -178,7 +200,7 @@ void sysfail::ActiveSession::thd_disable(pid_t tid) {
 
 void sysfail::ActiveSession::thd_enable() {
     auto tid = gettid();
-    if (!plan.selector(tid)) {
+    if (!plan.p.selector(tid)) {
         // std::cerr << "Not enabling sysfail for " << pid << "\n";
         return;
     }
@@ -235,21 +257,30 @@ void sysfail::ActiveSession::fail_maybe(ucontext_t *ctx) {
 
 namespace {
     std::shared_ptr<sysfail::ActiveSession> session = nullptr;
+
+    struct NotifySigHdlrCompletion {
+        sysfail::ThdState* st;
+        NotifySigHdlrCompletion(
+            siginfo_t *info
+            ) : st(
+                reinterpret_cast<sysfail::ThdState*>(info->si_value.sival_ptr
+            )) {}
+        ~NotifySigHdlrCompletion() {
+            st->sig_coord.release();
+        }
+    };
 }
 
 static void sysfail::enable_sysfail(int sig, siginfo_t *info, void *ucontext) {
     {
+        NotifySigHdlrCompletion r(info); // Expect thread-state is initialized
         auto s = session;
         if (!s) {
             std::cerr << "Can't enable sysfail, no active session\n";
             return;
         }
 
-        // Expect thread-state is initialized
-        auto st = reinterpret_cast<sysfail::ThdState*>(info->si_value.sival_ptr);
-
-        enable(s->self_text, st);
-        st->sig_coord.release();
+        enable(s->self_text, r.st);
     }
 
     ucontext_t *ctx = (ucontext_t *)ucontext;
@@ -257,16 +288,14 @@ static void sysfail::enable_sysfail(int sig, siginfo_t *info, void *ucontext) {
 }
 
 static void sysfail::disable_sysfail(int sig, siginfo_t *info, void *ucontext) {
+    NotifySigHdlrCompletion r(info); // Expect thread-state is initialized
     auto s = session;
     if (!s) {
         std::cerr << "Can't disable sysfail, no active session\n";
         return;
     }
 
-    auto st = reinterpret_cast<sysfail::ThdState*>(info->si_value.sival_ptr);
-
     disable();
-    st->sig_coord.release();
 }
 
 static void sysfail::reenable_sysfail(int sig, siginfo_t *info, void *ucontext) {
@@ -298,7 +327,7 @@ static void sysfail::handle_sigsys(int sig, siginfo_t *info, void *ucontext) {
                 if (cmd == SIG_BLOCK || cmd == SIG_SETMASK) {
                     auto tid = s->disarm();
                     continue_syscall(ctx);
-                    send_signal(tid, SIG_REARM, nullptr);
+                    send_signal<void>(tid, SIG_REARM, nullptr);
                 }
             }
         } else if (syscall == SYS_rt_sigreturn) {
@@ -317,7 +346,9 @@ sysfail::Session::Session(const Plan& _plan) {
     auto m = get_mmap(getpid());
     assert(m.has_value());
 
-    session = std::make_shared<ActiveSession>(_plan, m->self_text());
+    auto s = std::make_shared<ActiveSession>(_plan, m->self_text());
+    session = s;
+    s->initialize();
 }
 
 sysfail::Session::~Session() {

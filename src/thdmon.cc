@@ -6,7 +6,6 @@
 #include <thread>
 
 #include "thdmon.hh"
-#include "signal.hh"
 
 namespace fs = std::filesystem;
 
@@ -18,9 +17,9 @@ namespace {
 
 sysfail::ThdMon::ThdMon(
     pid_t pid,
-    std::chrono::microseconds poll_itvl,
-    std::function<void(pid_t, ThdSt)> handler
-) : pid(pid), poll_itvl(poll_itvl) {
+    const thread_discovery::ProcPoll& config,
+    ThdEvtHdlr handler
+) : pid(pid), poll_itvl(config.itvl) {
     // Found the hard way that inotify does not work for /proc
     // so for now we poll!
     // TODO: replace this with netlink cn_proc based monitoring
@@ -30,12 +29,17 @@ sysfail::ThdMon::ThdMon(
         throw std::runtime_error("No such process" + std::to_string(pid));
     }
 
-    thd = std::thread(&ThdMon::process, this, handler);
+    poller_thd = std::thread(&ThdMon::process, this, handler);
+    poll_initialized.acquire();
 }
 
 sysfail::ThdMon::~ThdMon() {
-    run = false;
-    thd.join();
+    {
+        std::lock_guard<std::mutex> l(stop_ctrl.stop_mtx);
+        stop_ctrl.stop = true;
+        stop_ctrl.stop_cv.notify_all();
+    }
+    poller_thd.join();
 }
 
 void sysfail::ThdMon::process(ThdEvtHdlr handler) {
@@ -49,15 +53,18 @@ void sysfail::ThdMon::process(ThdEvtHdlr handler) {
 
     pid_t self = gettid();
     known_thds.insert({self, gen_start});
-    handler(self, ThdSt::Self);
-
+    handler(self, DiscThdSt::Self);
+    bool run = true;
+    std::unique_lock<std::mutex> l(stop_ctrl.stop_mtx);
     for (gen_t g = gen_start; run; g++) {
         for (const auto& entry : fs::directory_iterator(task_dir)) {
             auto name = entry.path().filename().string();
             pid_t tid = std::stoi(name);
             auto it = known_thds.find(tid);
             if (it == known_thds.end()) {
-                handler(tid, g == 0 ? ThdSt::Existing : ThdSt::Spawned);
+                handler(
+                    tid,
+                    g == gen_start ? DiscThdSt::Existing : DiscThdSt::Spawned);
                 known_thds.insert({tid, g});
             } else {
                 it->second = g;
@@ -70,9 +77,16 @@ void sysfail::ThdMon::process(ThdEvtHdlr handler) {
             }
         }
         for (auto tid : to_remove) {
-            handler(tid, ThdSt::Terminated);
+            handler(tid, DiscThdSt::Terminated);
             known_thds.erase(tid);
         }
-        std::this_thread::sleep_for(poll_itvl);
+        if (g == gen_start) {
+            poll_initialized.release();
+        }
+        stop_ctrl.stop_cv.wait_for(
+            l,
+            poll_itvl,
+            [&](){ return stop_ctrl.stop; });
+        run = ! stop_ctrl.stop;
     }
 }

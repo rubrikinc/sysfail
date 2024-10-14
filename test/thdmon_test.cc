@@ -12,7 +12,7 @@ using namespace std::chrono_literals;
 namespace sysfail {
     struct TMonEvt {
         pid_t tid;
-        ThdSt state;
+        DiscThdSt state;
     };
     struct TestExp {
         pid_t tid;
@@ -109,7 +109,7 @@ namespace sysfail {
         });
 
         {
-            ThdMon tmon(getpid(), 10ms, [&](pid_t tid, ThdSt state) {
+            ThdMon tmon(getpid(), {10ms}, [&](pid_t tid, DiscThdSt state) {
                 live_evts.push_back(TMonEvt{tid, state});
             });
 
@@ -165,7 +165,7 @@ namespace sysfail {
             (v{
                 evts.before(
                     M<TMonEvt>{{
-                        [](auto& e) { return e.state == ThdSt::Existing; },
+                        [](auto& e) { return e.state == DiscThdSt::Existing; },
                         [&](auto& e) { return e.tid == t0_tid || e.tid == gettid(); }}},
                     M<TestEvt>{{[](auto& e) { return e == TestEvt::Start; }}}),
                 evts.before(
@@ -184,17 +184,17 @@ namespace sysfail {
                     M<TestExp>{{[&](auto& e) { return e.tid == t1_tid; }}}),
                 evts.before(
                     M<TMonEvt>{{
-                        [](auto& e) { return e.state == ThdSt::Spawned; },
+                        [](auto& e) { return e.state == DiscThdSt::Spawned; },
                         [&](auto& e) { return e.tid == t1_tid; }}},
                     M<TestEvt>{{[](auto& e) { return e == TestEvt::T1Started; }}}),
                 evts.before(
                     M<TMonEvt>{{
-                        [](auto& e) { return e.state == ThdSt::Terminated; },
+                        [](auto& e) { return e.state == DiscThdSt::Terminated; },
                         [&](auto& e) { return e.tid == t1_tid; }}},
                     M<TestEvt>{{[](auto& e) { return e == TestEvt::T1Remains; }}}),
                 evts.before(
                     M<TMonEvt>{{
-                        [](auto& e) { return e.state == ThdSt::Terminated; },
+                        [](auto& e) { return e.state == DiscThdSt::Terminated; },
                         [&](auto& e) { return e.tid == t1_tid; }}},
                     M<TestEvt>{{[](auto& e) { return e == TestEvt::End; }}}),
                 evts.before(
@@ -208,7 +208,7 @@ namespace sysfail {
         EXPECT_EQ(
             evts.before(
                     M<TMonEvt>{{[&](auto& e) {
-                        auto self = e.state == ThdSt::Self;
+                        auto self = e.state == DiscThdSt::Self;
                         if (self) mon_tid = e.tid;
                         return self;
                     }}},
@@ -227,7 +227,7 @@ namespace sysfail {
                         [&](auto& e) { return e.tid == mon_tid; }}},
                     M<TestEvt>{{[](auto& e) { return e == TestEvt::End; }}}),
                 evts.before(
-                    M<TMonEvt>{{[&](auto& e) { return e.state == ThdSt::Self; }}},
+                    M<TMonEvt>{{[&](auto& e) { return e.state == DiscThdSt::Self; }}},
                     M<TestEvt>{{[](auto& e) { return e == TestEvt::End; }}})}),
             (v{1, 1, 1})) << "Monitor thread was identified too many times";
 
@@ -261,7 +261,7 @@ namespace sysfail {
                     M<TestEvt>{{[](auto& e) { return e == TestEvt::T1Started; }}},
                     M<TestEvt>{{[](auto& e) { return e == TestEvt::T1Remains; }}}),
                 evts.between(
-                    M<TMonEvt>{{[&](auto& e) { return e.state == ThdSt::Spawned; }}},
+                    M<TMonEvt>{{[&](auto& e) { return e.state == DiscThdSt::Spawned; }}},
                     M<TestEvt>{{[](auto& e) { return e == TestEvt::T1Started; }}},
                     M<TestEvt>{{[](auto& e) { return e == TestEvt::TxRunning; }}}),
                 evts.between(
@@ -269,7 +269,7 @@ namespace sysfail {
                     M<TestEvt>{{[](auto& e) { return e == TestEvt::T1Started; }}},
                     M<TestEvt>{{[](auto& e) { return e == TestEvt::TxRunning; }}}),
                 evts.between(
-                    M<TMonEvt>{{[&](auto& e) { return e.state == ThdSt::Terminated; }}},
+                    M<TMonEvt>{{[&](auto& e) { return e.state == DiscThdSt::Terminated; }}},
                     M<TestEvt>{{[](auto& e) { return e == TestEvt::TxRunning; }}},
                     M<TestEvt>{{[](auto& e) { return e == TestEvt::T1Remains; }}}),
                 evts.between(
@@ -279,15 +279,15 @@ namespace sysfail {
             (v{0, 0, 5, 5, 5, 5, 5})) << "Short-lived threads were identified too many times";
 
         EXPECT_EQ(
-            evts.count(M<TMonEvt>{{[&](auto& e) { return e.state == ThdSt::Spawned; }}}),
+            evts.count(M<TMonEvt>{{[&](auto& e) { return e.state == DiscThdSt::Spawned; }}}),
             6);
 
         EXPECT_EQ(
-            evts.count(M<TMonEvt>{{[&](auto& e) { return e.state == ThdSt::Terminated; }}}),
+            evts.count(M<TMonEvt>{{[&](auto& e) { return e.state == DiscThdSt::Terminated; }}}),
             6);
 
         EXPECT_EQ(
-            evts.count(M<TMonEvt>{{[&](auto& e) { return e.state == ThdSt::Existing; }}}),
+            evts.count(M<TMonEvt>{{[&](auto& e) { return e.state == DiscThdSt::Existing; }}}),
             2);
 	}
 
@@ -296,7 +296,7 @@ namespace sysfail {
 
         pid_t child_pid = 0;
         {
-            ThdMon tmon(getpid(), 10ms, [&](pid_t tid, ThdSt state) {
+            ThdMon tmon(getpid(), {10ms}, [&](pid_t tid, DiscThdSt state) {
                 live_evts.push_back(TMonEvt{tid, state});
             });
 
@@ -312,11 +312,11 @@ namespace sysfail {
         EXPECT_NE(child_pid, 0);
 
         EXPECT_EQ(
-            evts.count(M<TMonEvt>{{[&](auto& e) { return e.state == ThdSt::Self; }}}),
+            evts.count(M<TMonEvt>{{[&](auto& e) { return e.state == DiscThdSt::Self; }}}),
             1);
 
         EXPECT_EQ(
-            evts.count(M<TMonEvt>{{[&](auto& e) { return e.state == ThdSt::Existing; }}}),
+            evts.count(M<TMonEvt>{{[&](auto& e) { return e.state == DiscThdSt::Existing; }}}),
             1);
 
         EXPECT_EQ(
@@ -336,9 +336,22 @@ namespace sysfail {
         tid_ready.acquire();
 
         EXPECT_THROW(
-            ThdMon tmon(t0_tid, 10ms, [&](pid_t tid, ThdSt state) {}),
+            ThdMon tmon(t0_tid, {10ms}, [&](pid_t tid, DiscThdSt state) {}),
             std::runtime_error);
 
         t0.join();
+    }
+
+    TEST(ThdMon, StopsReasonablyQuicklyDespiteHighPollInterval) {
+        oneapi::tbb::concurrent_vector<Evt> live_evts;
+
+        auto start_tm = std::chrono::system_clock::now();
+        {
+            ThdMon tmon(getpid(), {30min}, [&](pid_t tid, DiscThdSt state) {
+                live_evts.push_back(TMonEvt{tid, state});
+            });
+            std::this_thread::sleep_for(5ms);
+        }
+        EXPECT_LT((std::chrono::system_clock::now() - start_tm), 20ms);
     }
 }
