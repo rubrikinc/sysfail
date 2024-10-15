@@ -76,18 +76,12 @@ void sysfail::ActiveSession::initialize() {
 
 void sysfail::ActiveSession::thd_track(pid_t tid, sysfail::DiscThdSt state) {
     switch (state) {
-        case DiscThdSt::Self:
-            // ignore, this is thd-mon's own thread
-            break;
         case DiscThdSt::Existing:
-            thd_enable(tid);
-            break;
         case DiscThdSt::Spawned:
             thd_enable(tid);
             break;
         case DiscThdSt::Terminated:
             thd_disable(tid);
-            break;
     }
 }
 
@@ -239,16 +233,25 @@ void sysfail::ActiveSession::fail_maybe(ucontext_t *ctx) {
     continue_syscall(ctx);
 }
 
+void sysfail::ActiveSession::discover_threads() {
+    if (!tmon) {
+        // this can happen if discover is called after ActiveSession is
+        // constructed but before it is initialized.
+        throw std::runtime_error("Thread monitor not initialized");
+    }
+    tmon->rescan_threads();
+}
+
 namespace {
     std::shared_ptr<sysfail::ActiveSession> session = nullptr;
 
     struct NotifySigHdlrCompletion {
         sysfail::ThdState* st;
+
         NotifySigHdlrCompletion(
             siginfo_t *info
-            ) : st(
-                reinterpret_cast<sysfail::ThdState*>(info->si_value.sival_ptr
-            )) {}
+        ): st(reinterpret_cast<sysfail::ThdState*>(info->si_value.sival_ptr)) {}
+
         ~NotifySigHdlrCompletion() {
             st->sig_coord.release();
         }
@@ -369,6 +372,11 @@ void sysfail::Session::add(pid_t tid) {
 void sysfail::Session::remove(pid_t tid) {
     std::shared_lock<std::shared_mutex> l(lck);
     session->thd_disable(tid);
+}
+
+void sysfail::Session::discover_threads() {
+    std::shared_lock<std::shared_mutex> l(lck);
+    session->discover_threads();
 }
 
 extern "C" {

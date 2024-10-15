@@ -139,7 +139,7 @@ namespace sysfail {
             std::this_thread::sleep_for(
                 std::chrono::milliseconds(delay_ms(rnd_eng)));
 
-            thds.emplace_back([&]() {
+            thds.emplace_back([&, i]() {
                 if (i == session_starter) {
                     std::unique_lock<std::mutex> l(session.m);
                     session.inst = std::make_unique<Session>(p);
@@ -188,21 +188,15 @@ namespace sysfail {
 
         auto test_thd = gettid();
 
-        auto poll_dur = 1ms;
-
         std::random_device rd;
         thread_local std::mt19937 rnd_eng(rd());
 
         sysfail::Plan p(
             { {SYS_read, {1.0, 0, 0us, {{EIO, 1}}}} },
-            [test_thd](pid_t tid) { return tid % 2 == 0 && tid != test_thd; },
+            [test_thd](pid_t tid) { return true; },
             thread_discovery::None{});
 
-
-        std::vector<std::thread> thds;
-
-        auto pid = getpid();
-        auto my_thread_count = [pid]() -> int {
+        auto my_thread_count = []() -> int {
             namespace fs = std::filesystem;
             int count = 0;
             for (const auto& entry : fs::directory_iterator(tasks_dir)) {
@@ -216,11 +210,98 @@ namespace sysfail {
 
             EXPECT_EQ(my_thread_count(), 1);
 
+            auto ret = f.read();
+            EXPECT_FALSE(ret.has_value());
+
             std::this_thread::sleep_for(5ms);
 
             EXPECT_EQ(my_thread_count(), 1);
-        }
 
-        for (auto& t : thds) t.join();
+            ret = f.read();
+            EXPECT_FALSE(ret.has_value());
+        }
+    }
+
+    void test_manual_polling_based_thread_discovery(
+        thread_discovery::Strategy thd_disc
+    ) {
+        TmpFile f;
+        f.write("foo");
+
+        sysfail::Plan p(
+            { {SYS_read, {1.0, 0, 0us, {{EIO, 1}}}} },
+            [](pid_t tid) { return true; },
+            thd_disc);
+
+        {
+            Session s(p);
+
+            auto ret = f.read();
+            EXPECT_FALSE(ret.has_value());
+
+            int num_threads = 4;
+
+            std::barrier b1(2), b2(num_threads + 1);
+
+            std::vector<std::thread> thds;
+
+            thds.push_back(std::thread([&]() {
+                // sleep to allow session to detect the thread, so we can
+                // assert that it is still not detected (and failure injected)
+                std::this_thread::sleep_for(5ms);
+                auto ret = f.read();
+                EXPECT_TRUE(ret.has_value());
+                EXPECT_EQ(ret.value(), "foo");
+
+                b1.arrive_and_wait(); // 1
+                b1.arrive_and_wait(); // 2
+                ret = f.read();
+                EXPECT_FALSE(ret.has_value());
+
+                b2.arrive_and_wait(); // 3
+                ret = f.read();
+                EXPECT_FALSE(ret.has_value());
+                b2.arrive_and_wait(); // 4
+                ret = f.read();
+                EXPECT_FALSE(ret.has_value());
+            }));
+
+            b1.arrive_and_wait(); // 1
+            s.discover_threads();
+            b1.arrive_and_wait(); // 2
+            ret = f.read();
+            EXPECT_FALSE(ret.has_value());
+
+            for (int i = 1; i < num_threads; i++) {
+                thds.push_back(std::thread([&]() {
+                    std::this_thread::sleep_for(5ms);
+                    auto ret = f.read();
+                    EXPECT_TRUE(ret.has_value());
+                    EXPECT_EQ(ret.value(), "foo");
+
+                    b2.arrive_and_wait(); // 3
+                    b2.arrive_and_wait(); // 4
+                    ret = f.read();
+                    EXPECT_FALSE(ret.has_value());
+                }));
+            }
+
+            b2.arrive_and_wait(); // 3
+            s.discover_threads();
+            b2.arrive_and_wait(); // 4
+            ret = f.read();
+            EXPECT_FALSE(ret.has_value());
+
+            for (auto& t : thds) t.join();
+        }
+    }
+
+    TEST(Lib_ThdMon, ManualPolledThreadDiscoveryWithNoPeriodicPolling) {
+        test_manual_polling_based_thread_discovery(thread_discovery::None{});
+    }
+
+    TEST(Lib_ThdMon, ManualPolledThreadDiscoveryWithSlowPeriodicPolling) {
+        test_manual_polling_based_thread_discovery(
+            thread_discovery::ProcPoll{10min});
     }
 }

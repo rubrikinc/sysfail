@@ -97,6 +97,8 @@ namespace sysfail {
         void fail_maybe(ucontext_t *ctx);
 
         void thd_track(pid_t tid, DiscThdSt state);
+
+        void discover_threads();
     };
 
     std::shared_ptr<ActiveSession> session = nullptr;

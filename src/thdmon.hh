@@ -38,11 +38,13 @@ namespace sysfail {
 
         void process();
         void scan_tasks();
+
     public:
-        ThdMon(
-            const thread_discovery::Strategy& config,
-            ThdEvtHdlr handler);
+        ThdMon( const thread_discovery::Strategy& config, ThdEvtHdlr handler);
+
         ~ThdMon();
+
+        void rescan_threads();
     };
 }
 

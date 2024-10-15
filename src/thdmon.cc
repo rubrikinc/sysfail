@@ -44,7 +44,7 @@ sysfail::ThdMon::~ThdMon() {
         {
             std::lock_guard<std::mutex> l(stop_ctrl.stop_mtx);
             stop_ctrl.stop = true;
-            stop_ctrl.stop_cv.notify_all();
+            stop_ctrl.stop_cv.notify_one();
         }
         poller_thd.join();
     }
@@ -92,5 +92,15 @@ void sysfail::ThdMon::scan_tasks() {
     for (auto tid : to_remove) {
         handler(tid, DiscThdSt::Terminated);
         known_thds.erase(tid);
+    }
+}
+
+void sysfail::ThdMon::rescan_threads() {
+    if (poller_thd.joinable()) {
+        std::lock_guard<std::mutex> l(stop_ctrl.stop_mtx);
+        gen++;
+        scan_tasks();
+    } else {
+        scan_tasks();
     }
 }

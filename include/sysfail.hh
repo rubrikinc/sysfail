@@ -83,6 +83,7 @@ namespace sysfail {
         void remove();
         void add(pid_t tid);
         void remove(pid_t tid);
+        void discover_threads();
     };
 }
 
