@@ -2,6 +2,7 @@
 #define _THDMON_HH
 
 #include <functional>
+#include <filesystem>
 #include <thread>
 #include <condition_variable>
 #include <semaphore>
@@ -20,20 +21,26 @@ namespace sysfail {
     using ThdEvtHdlr = std::function<void(pid_t, DiscThdSt)>;
 
     class ThdMon {
-        const pid_t pid;
-        const std::chrono::microseconds poll_itvl;
+        const ThdEvtHdlr handler;
+        std::chrono::microseconds poll_itvl;
         std::thread poller_thd;
         std::binary_semaphore poll_initialized{0};
+
         struct {
             std::mutex stop_mtx;
             std::condition_variable stop_cv;
             bool stop = false;
         } stop_ctrl;
-        void process(ThdEvtHdlr handler);
+
+        using gen_t = uint32_t;
+        gen_t gen = 0;
+        std::unordered_map<pid_t, gen_t> known_thds;
+
+        void process();
+        void scan_tasks();
     public:
         ThdMon(
-            pid_t pid,
-            const thread_discovery::ProcPoll& config,
+            const thread_discovery::Strategy& config,
             ThdEvtHdlr handler);
         ~ThdMon();
     };

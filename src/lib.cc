@@ -69,25 +69,9 @@ sysfail::ActiveSession::ActiveSession(
 }
 
 void sysfail::ActiveSession::initialize() {
-    auto mk_tmon = [&](std::chrono::microseconds itvl) {
-        return std::make_unique<sysfail::ThdMon>(
-            getpid(),
-            itvl,
-            std::bind(&ActiveSession::thd_track, this, _1, _2));
-    };
-
-     tmon = std::visit(cases {
-        [&](const thread_discovery::ProcPoll& p) -> std::unique_ptr<sysfail::ThdMon> {
-            return mk_tmon(p.itvl);
-        },
-        [&](const thread_discovery::None& _) -> std::unique_ptr<sysfail::ThdMon> {
-             // std::chrono::microseconds::max() wakes up immediately :-(
-            return mk_tmon(10000h);
-        },
-        [](const auto&) -> std::unique_ptr<sysfail::ThdMon> {
-            throw std::runtime_error("Unknown thread discovery strategy");
-        }},
-        plan.p.thd_disc);
+    tmon = std::make_unique<sysfail::ThdMon>(
+        plan.p.thd_disc,
+        std::bind(&ActiveSession::thd_track, this, _1, _2));
 }
 
 void sysfail::ActiveSession::thd_track(pid_t tid, sysfail::DiscThdSt state) {

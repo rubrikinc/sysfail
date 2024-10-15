@@ -10,9 +10,11 @@
 #include <barrier>
 #include <thread>
 #include <cmath>
+#include <filesystem>
 #include <oneapi/tbb/concurrent_vector.h>
 
 #include "cisq.hh"
+#include "helpers.hh"
 
 using namespace testing;
 using namespace std::chrono_literals;
@@ -176,6 +178,48 @@ namespace sysfail {
         b.arrive_and_wait(); // 1
         session.inst.reset();
         b.arrive_and_wait(); // 2
+
+        for (auto& t : thds) t.join();
+    }
+
+    TEST(Lib_ThdMon, DoesNotRunAnyThreadsInNoThreadConfig) {
+        TmpFile f;
+        f.write("foo");
+
+        auto test_thd = gettid();
+
+        auto poll_dur = 1ms;
+
+        std::random_device rd;
+        thread_local std::mt19937 rnd_eng(rd());
+
+        sysfail::Plan p(
+            { {SYS_read, {1.0, 0, 0us, {{EIO, 1}}}} },
+            [test_thd](pid_t tid) { return tid % 2 == 0 && tid != test_thd; },
+            thread_discovery::None{});
+
+
+        std::vector<std::thread> thds;
+
+        auto pid = getpid();
+        auto my_thread_count = [pid]() -> int {
+            namespace fs = std::filesystem;
+            int count = 0;
+            for (const auto& entry : fs::directory_iterator(tasks_dir)) {
+                count++;
+            }
+            return count;
+        };
+
+        {
+            Session s(p);
+
+            EXPECT_EQ(my_thread_count(), 1);
+
+            std::this_thread::sleep_for(5ms);
+
+            EXPECT_EQ(my_thread_count(), 1);
+        }
 
         for (auto& t : thds) t.join();
     }

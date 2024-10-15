@@ -95,6 +95,8 @@ namespace sysfail {
 
     using v = std::vector<int>;
 
+    using P = thread_discovery::ProcPoll;
+
 	TEST(ThdMon, ReportsThreadActivity) {
         oneapi::tbb::concurrent_vector<Evt> live_evts;
 
@@ -109,7 +111,7 @@ namespace sysfail {
         });
 
         {
-            ThdMon tmon(getpid(), {10ms}, [&](pid_t tid, DiscThdSt state) {
+            ThdMon tmon(P{10ms}, [&](pid_t tid, DiscThdSt state) {
                 live_evts.push_back(TMonEvt{tid, state});
             });
 
@@ -296,7 +298,7 @@ namespace sysfail {
 
         pid_t child_pid = 0;
         {
-            ThdMon tmon(getpid(), {10ms}, [&](pid_t tid, DiscThdSt state) {
+            ThdMon tmon(P{10ms}, [&](pid_t tid, DiscThdSt state) {
                 live_evts.push_back(TMonEvt{tid, state});
             });
 
@@ -324,30 +326,12 @@ namespace sysfail {
             0);
     }
 
-    TEST(ThdMon, ReportsErrorIfSomeThreadIdIsPassedInPlaceOfProcessId) {
-        std::binary_semaphore tid_ready(1);
-        std::atomic<pid_t> t0_tid = 0;
-        std::thread t0([&]() {
-            t0_tid = gettid();
-            tid_ready.release();
-            std::this_thread::sleep_for(50ms);
-        });
-
-        tid_ready.acquire();
-
-        EXPECT_THROW(
-            ThdMon tmon(t0_tid, {10ms}, [&](pid_t tid, DiscThdSt state) {}),
-            std::runtime_error);
-
-        t0.join();
-    }
-
     TEST(ThdMon, StopsReasonablyQuicklyDespiteHighPollInterval) {
         oneapi::tbb::concurrent_vector<Evt> live_evts;
 
         auto start_tm = std::chrono::system_clock::now();
         {
-            ThdMon tmon(getpid(), {30min}, [&](pid_t tid, DiscThdSt state) {
+            ThdMon tmon(P{30min}, [&](pid_t tid, DiscThdSt state) {
                 live_evts.push_back(TMonEvt{tid, state});
             });
             std::this_thread::sleep_for(5ms);
