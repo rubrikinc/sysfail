@@ -10,17 +10,34 @@
 #include <chrono>
 #include <variant>
 #include <signal.h>
+#include <stdexcept>
 
 namespace sysfail {
     using Syscall = int;
     using Errno = int;
     using Signal = int;
 
+    struct Probability {
+        const double p;          // [0, 1] 0 => never fail, 1 => always fail
+        const double after_bias; // [0, 1] 0 => before syscall, 1 => after syscall
+        Probability(
+            double p,
+            double after_bias = 0
+        ) : p(p), after_bias(after_bias) {
+            if (p < 0 || p > 1) {
+                throw std::invalid_argument("Probability must be in [0, 1]");
+            }
+            if (after_bias < 0 || after_bias > 1) {
+                throw std::invalid_argument("Bias must be in [0, 1]");
+            }
+        }
+    };
+
     struct Outcome {
-        double fail_probability;
-        double delay_probability;
-        std::chrono::microseconds max_delay;
-        std::map<Errno, double> error_weights;
+        const Probability fail;
+        const Probability delay;
+        const std::chrono::microseconds max_delay;
+        const std::map<Errno, double> error_weights;
     };
 
     struct AddrRange;

@@ -36,8 +36,8 @@ namespace sysfail {
     static void disable_sysfail(int sig, siginfo_t *info, void *ucontext);
 
     struct ActiveOutcome {
-        double fail_p;
-        double delay_p;
+        Probability fail;
+        Probability delay;
         std::chrono::microseconds max_delay;
         std::map<double, Errno> error_by_cumulative_p;
 

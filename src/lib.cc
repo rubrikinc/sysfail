@@ -42,8 +42,8 @@ void sysfail::continue_syscall(ucontext_t *ctx) {
 
 sysfail::ActiveOutcome::ActiveOutcome(
     const Outcome& _o
-) : fail_p(_o.fail_probability),
-    delay_p(_o.delay_probability),
+) : fail(_o.fail),
+    delay(_o.delay),
     max_delay(_o.max_delay) {
     double cumulative = 0;
     for (const auto& [err_no, weight] : _o.error_weights) {
@@ -212,14 +212,14 @@ void sysfail::ActiveSession::fail_maybe(ucontext_t *ctx) {
     thread_local std::mt19937 rnd_eng(rd());
 
     std::uniform_real_distribution<double> p_dist(0, 1);
-    if (o->second.delay_p > 0) {
-        if (p_dist(rnd_eng) < o->second.delay_p) {
+    if (o->second.delay.p > 0) {
+        if (p_dist(rnd_eng) < o->second.delay.p) {
             std::uniform_int_distribution<int> delay_dist(0, o->second.max_delay.count());
             std::this_thread::sleep_for(std::chrono::microseconds(delay_dist(rnd_eng)));
         }
     }
-    if (o->second.fail_p > 0) {
-        if (p_dist(rnd_eng) < o->second.fail_p) {
+    if (o->second.fail.p > 0) {
+        if (p_dist(rnd_eng) < o->second.fail.p) {
             auto err_p = p_dist(rnd_eng);
             auto e = o->second.error_by_cumulative_p.lower_bound(err_p);
             if (e != o->second.error_by_cumulative_p.end()) {
