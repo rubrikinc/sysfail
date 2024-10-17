@@ -11,11 +11,16 @@
 #include <oneapi/tbb/concurrent_vector.h>
 
 #include "cisq.hh"
+#include "log.hh"
+#include "signal.hh"
+#include "lib.hh"
 
 using namespace testing;
 using namespace std::chrono_literals;
 
 namespace sysfail {
+    using namespace Cisq;
+
     TEST(SysFail, LoadSessionWithoutFailureInjection) {
         TmpFile tFile;
         tFile.write("foo bar baz quux");
@@ -588,5 +593,112 @@ namespace sysfail {
 
             for (auto& t : thds) t.join();
         };
+    }
+
+    TEST(SysFail, FailsAfterTheSyscallWhenSoConfigured) {
+        TmpFile tFile;
+
+        sysfail::Plan p(
+            { {SYS_write, {{1, 1}, 0, 0ms, {{EIO, 1}}}} },
+            [](pid_t tid) { return true; },
+            thread_discovery::None{});
+
+        tFile.write("foo");
+
+        {
+            // NOTE: this test does not report failure because writes fail
+            // use debugger to see the failure
+            auto rd_result = tFile.read();
+            EXPECT_EQ(rd_result.value(), "foo");
+            Session s(p);
+            auto wr_result = tFile.write("bar");
+            EXPECT_FALSE(wr_result.has_value());
+            rd_result = tFile.read();
+            EXPECT_TRUE(rd_result.has_value());
+            // log(rd_result.value().c_str());  // <- this can help debug
+            EXPECT_EQ(rd_result.value(), "bar");
+        }
+    }
+
+    using Tm = std::chrono::time_point<std::chrono::system_clock>;
+
+    TEST(SysFail, DelaysAfterTheSyscallWhenSoConfigured) {
+        auto test_tid = gettid();
+
+        auto sleep_us = 1000us;
+
+        sysfail::Plan p(
+            { {SYS_write, {0, {1, 1}, sleep_us, {}}} },
+            [=](pid_t tid) { return tid == test_tid; },
+            thread_discovery::None{});
+
+        int evt_count = 1000;
+
+        Pipe<Tm> pipe;
+
+        auto us = [](auto d) {
+            return std::chrono::duration_cast<std::chrono::microseconds>(d);
+        };
+
+        auto now = std::chrono::system_clock::now;
+
+        auto total_tm = [](
+            const std::vector<std::chrono::microseconds>& delays
+        ) {
+            return std::reduce(
+                delays.begin(),
+                delays.end(),
+                0us,
+                std::plus<std::chrono::microseconds>());
+        };
+
+        auto compute_delivery_metrics = [&]() {
+            std::vector<std::chrono::microseconds> write_delay;
+            std::vector<std::chrono::microseconds> read_delay;
+
+            std::thread reader([&]() {
+                for (int i = 0; i < evt_count; i++) {
+                    auto polled = pipe.read();
+                    if (polled.has_value()) {
+                        auto delay = us(now() - polled.value());
+                        read_delay.push_back(delay);
+                    } else {
+                        std::cerr << "Failed to read from pipe" << std::endl;
+                    }
+                }
+            });
+
+            for (int i = 0; i < evt_count; i++) {
+                auto s = now();
+                pipe.write(s);
+                write_delay.push_back(us(now() - s));
+            }
+            reader.join();
+
+            return std::make_pair(total_tm(read_delay), total_tm(write_delay));
+        };
+
+        {
+            auto [read_tm_without_delay, write_tm_without_delay] =
+                compute_delivery_metrics();
+            Session s(p);
+            auto [read_tm_with_delay, write_tm_with_delay] =
+                compute_delivery_metrics();
+            s.remove();
+
+            std::cout << "Read without delay: " << read_tm_without_delay << std::endl;
+            std::cout << "Read with delay: " << read_tm_with_delay << std::endl;
+
+            std::cout << "Write without delay: " << write_tm_without_delay << std::endl;
+            std::cout << "Write with delay: " << write_tm_with_delay << std::endl;
+
+            auto higher_rd_tm =
+                std::max(read_tm_without_delay, read_tm_with_delay);
+            auto lower_rd_tm =
+                std::min(read_tm_without_delay, read_tm_with_delay);
+
+            EXPECT_LT( higher_rd_tm / lower_rd_tm, 15);
+            EXPECT_GT( write_tm_with_delay / write_tm_without_delay, 150);
+        }
     }
 }

@@ -200,6 +200,15 @@ void sysfail::ActiveSession::thd_disable() {
     thd_st.erase(a);
 }
 
+namespace {
+    void sleep(std::chrono::microseconds dur) {
+        // TODO: avoid libc's nanosleep, if someone failure-injects it
+        // this will confuse them. Use an equivalent
+        // continue-sleep-after-interrupt helper instead.
+        std::this_thread::sleep_for(dur);
+    }
+}
+
 void sysfail::ActiveSession::fail_maybe(ucontext_t *ctx) {
     auto call = ctx->uc_mcontext.gregs[REG_RAX];
 
@@ -212,25 +221,48 @@ void sysfail::ActiveSession::fail_maybe(ucontext_t *ctx) {
     thread_local std::mt19937 rnd_eng(rd());
 
     std::uniform_real_distribution<double> p_dist(0, 1);
+    auto delay_after = std::chrono::microseconds(0);
     if (o->second.delay.p > 0) {
         if (p_dist(rnd_eng) < o->second.delay.p) {
+            auto after_p = p_dist(rnd_eng);
+            auto bias = o->second.delay.after_bias;
             std::uniform_int_distribution<int> delay_dist(0, o->second.max_delay.count());
-            std::this_thread::sleep_for(std::chrono::microseconds(delay_dist(rnd_eng)));
+            auto delay = std::chrono::microseconds(delay_dist(rnd_eng));
+            if (bias && after_p < bias) {
+                delay_after = delay;
+            } else {
+                sleep(delay);
+            }
         }
     }
+    Errno fail_with = 0;
     if (o->second.fail.p > 0) {
         if (p_dist(rnd_eng) < o->second.fail.p) {
             auto err_p = p_dist(rnd_eng);
             auto e = o->second.error_by_cumulative_p.lower_bound(err_p);
-            if (e != o->second.error_by_cumulative_p.end()) {
-                // kernel returns negative 0 - 4096 error codes in %rax
-                ctx->uc_mcontext.gregs[REG_RAX] = -e->second;
-                return;
+            auto after_p = p_dist(rnd_eng);
+            if (o->second.fail.after_bias) {
+                if (after_p < o->second.fail.after_bias) {
+                    fail_with = e->second;
+                }
+            } else {
+                if (e != o->second.error_by_cumulative_p.end()) {
+                    // kernel returns negative 0 - 4096 error codes in %rax
+                    ctx->uc_mcontext.gregs[REG_RAX] = -e->second;
+                    return;
+                }
             }
         }
     }
 
     continue_syscall(ctx);
+
+    if (fail_with) {
+        ctx->uc_mcontext.gregs[REG_RAX] = -fail_with;
+    }
+    if (delay_after.count()) {
+        sleep(delay_after);
+    }
 }
 
 void sysfail::ActiveSession::discover_threads() {

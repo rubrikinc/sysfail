@@ -20,6 +20,8 @@ using namespace testing;
 using namespace std::chrono_literals;
 
 namespace sysfail {
+    using namespace Cisq;
+
     TEST(Lib_ThdMon, FailureInjectsAllEligibleThreads) {
         TmpFile f;
         f.write("foo");

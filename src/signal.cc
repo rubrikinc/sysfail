@@ -52,7 +52,7 @@ void sysfail::_send_signal(
         if (ret == -ESRCH) {
             // the thread died without telling us it was dying but we don't want
             // to deadlock so we release
-            if (t) on_esrch(t);
+            if (t && on_esrch) on_esrch(t);
             return;
         }
     }
