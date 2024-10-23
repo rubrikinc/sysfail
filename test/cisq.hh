@@ -56,14 +56,14 @@ namespace Cisq {
             return t;
         }
 
-        std::expected<void, std::runtime_error> write(const T& t) {
+        std::expected<int, std::runtime_error> write(const T& t) {
             auto bytes = syscall(SYS_write, wr_fd, &t, sizeof(t));
 
             if (bytes < 0) {
                 return std::unexpected(err_msg("Failed to write file", errno));
             }
 
-            return {};
+            return static_cast<int>(bytes);
         }
     };
 }

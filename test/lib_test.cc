@@ -737,4 +737,60 @@ namespace sysfail {
         EXPECT_GT(d.with.rd / d.without.rd, 25) << fail_msg;
         EXPECT_GT(d.with.wr / d.without.wr, 150) << fail_msg;
     }
+
+    template <typename T, typename E> void assertValue(
+        const std::expected<T, E> &e,
+        const T &v,
+        const char* file,
+        int line
+    ) {
+        ScopedTrace t(file, line, "");
+        EXPECT_TRUE(e.has_value());
+        if (e.has_value()) {
+            EXPECT_EQ(e.value(), v);
+        }
+    }
+
+    #define ASSERT_VALUE(e, v) assertValue(e, v, __FILE__, __LINE__)
+
+    TEST(SysFail, DoesNotFailIneligibleSyscalls) {
+        Pipe<int> p1, p2;
+
+        auto fail_p1rd = [&p1](const greg_t* regs) -> bool {
+            return p1.rd_fd == regs[REG_RDI];
+        };
+
+        auto fail_p1wr = [&p1](const greg_t* regs) -> bool {
+            return p1.wr_fd == regs[REG_RDI];
+        };
+
+        {
+            EXPECT_TRUE(p1.write(10).has_value());
+            EXPECT_TRUE(p2.write(20).has_value());
+            ASSERT_VALUE(p1.read(), 10);
+            ASSERT_VALUE(p2.read(), 20);
+        }
+
+        {
+            sysfail::Plan p(
+                { {SYS_write, {{1, 0}, 0, 0ms, {{EIO, 1}}, fail_p1wr}} },
+                [](pid_t tid) { return true; },
+                thread_discovery::None{});
+            Session s(p);
+            EXPECT_FALSE(p1.write(30).has_value());
+            EXPECT_TRUE(p2.write(40).has_value());
+        }
+
+        EXPECT_TRUE(p1.write(50).has_value());
+
+        {
+            sysfail::Plan p(
+                { {SYS_read, {{1, 0}, 0, 0ms, {{EIO, 1}}, fail_p1rd}} },
+                [](pid_t tid) { return true; },
+                thread_discovery::None{});
+            Session s(p);
+            EXPECT_FALSE(p1.read().has_value());
+            ASSERT_VALUE(p2.read(), 40);
+        }
+    }
 }

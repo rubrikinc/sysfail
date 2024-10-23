@@ -40,8 +40,11 @@ namespace sysfail {
         Probability delay;
         std::chrono::microseconds max_delay;
         std::map<double, Errno> error_by_cumulative_p;
+        InvocationPredicate eligibility_check;
 
         ActiveOutcome(const Outcome& _o);
+
+        bool eligible(const greg_t* regs) const;
     };
 
     struct ActivePlan {

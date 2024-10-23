@@ -33,11 +33,14 @@ namespace sysfail {
         }
     };
 
+    using InvocationPredicate = const std::function<bool(const greg_t*)>;
+
     struct Outcome {
         const Probability fail;
         const Probability delay;
         const std::chrono::microseconds max_delay;
         const std::map<Errno, double> error_weights;
+        InvocationPredicate eligible;
     };
 
     struct AddrRange;

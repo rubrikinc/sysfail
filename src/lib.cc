@@ -44,12 +44,20 @@ sysfail::ActiveOutcome::ActiveOutcome(
     const Outcome& _o
 ) : fail(_o.fail),
     delay(_o.delay),
-    max_delay(_o.max_delay) {
+    max_delay(_o.max_delay),
+    eligibility_check(_o.eligible) {
     double cumulative = 0;
     for (const auto& [err_no, weight] : _o.error_weights) {
         cumulative += weight;
         error_by_cumulative_p[cumulative] = err_no;
     }
+}
+
+bool sysfail::ActiveOutcome::eligible(const greg_t* regs) const {
+    if (!eligibility_check) return true;
+
+     // user wants to filter individual syscalls
+    return eligibility_check(regs);
 }
 
 sysfail::ActivePlan::ActivePlan(const Plan& p) : p(p) {
@@ -210,10 +218,11 @@ namespace {
 }
 
 void sysfail::ActiveSession::fail_maybe(ucontext_t *ctx) {
+    auto regs = ctx->uc_mcontext.gregs;
     auto call = ctx->uc_mcontext.gregs[REG_RAX];
 
     auto o = plan.outcomes.find(call);
-    if (o == plan.outcomes.end()) {
+    if (o == plan.outcomes.end() || !o->second.eligible(regs)) {
         continue_syscall(ctx);
         return;
     }
@@ -248,7 +257,7 @@ void sysfail::ActiveSession::fail_maybe(ucontext_t *ctx) {
             } else {
                 if (e != o->second.error_by_cumulative_p.end()) {
                     // kernel returns negative 0 - 4096 error codes in %rax
-                    ctx->uc_mcontext.gregs[REG_RAX] = -e->second;
+                    regs[REG_RAX] = -e->second;
                     return;
                 }
             }
@@ -258,7 +267,7 @@ void sysfail::ActiveSession::fail_maybe(ucontext_t *ctx) {
     continue_syscall(ctx);
 
     if (fail_with) {
-        ctx->uc_mcontext.gregs[REG_RAX] = -fail_with;
+        regs[REG_RAX] = -fail_with;
     }
     if (delay_after.count()) {
         sleep(delay_after);
