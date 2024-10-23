@@ -12,7 +12,7 @@
 #include <linux/unistd.h>
 
 #include "sysfail.hh"
-#include "lib.hh"
+#include "session.hh"
 #include "sysfail.h"
 #include "map.hh"
 #include "syscall.hh"

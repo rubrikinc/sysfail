@@ -13,7 +13,7 @@
 #include "cisq.hh"
 #include "log.hh"
 #include "signal.hh"
-#include "lib.hh"
+#include "session.hh"
 
 using namespace testing;
 using namespace std::chrono_literals;

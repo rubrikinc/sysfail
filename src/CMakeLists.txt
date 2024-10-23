@@ -4,7 +4,7 @@ set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} -x assembler-with-cpp")
 find_package(TBB REQUIRED)
 # Create the shared library
 add_library(sysfail SHARED
-    lib.cc
+    session.cc
     map.cc
     log.cc
     syscall.cc
