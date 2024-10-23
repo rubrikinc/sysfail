@@ -622,13 +622,24 @@ namespace sysfail {
 
     using Tm = std::chrono::time_point<std::chrono::system_clock>;
 
-    TEST(SysFail, DelaysAfterTheSyscallWhenSoConfigured) {
+    struct DelayMesurement {
+        std::chrono::microseconds rd, wr;
+    };
+
+    struct DelayEpisodes {
+        DelayMesurement without, with;
+    };
+
+    using FailMsg = std::string;
+
+    std::pair<DelayEpisodes, FailMsg> mesure_delay_effects(
+        std::chrono::microseconds sleep_us,
+        Probability p_delay
+    ) {
         auto test_tid = gettid();
 
-        auto sleep_us = 1000us;
-
         sysfail::Plan p(
-            { {SYS_write, {0, {1, 1}, sleep_us, {}}} },
+            { {SYS_write, {0, p_delay, sleep_us, {}}} },
             [=](pid_t tid) { return tid == test_tid; },
             thread_discovery::None{});
 
@@ -678,27 +689,52 @@ namespace sysfail {
             return std::make_pair(total_tm(read_delay), total_tm(write_delay));
         };
 
-        {
-            auto [read_tm_without_delay, write_tm_without_delay] =
-                compute_delivery_metrics();
-            Session s(p);
-            auto [read_tm_with_delay, write_tm_with_delay] =
-                compute_delivery_metrics();
-            s.remove();
+        auto [read_tm_without_delay, write_tm_without_delay] =
+            compute_delivery_metrics();
+        Session s(p);
+        auto [read_tm_with_delay, write_tm_with_delay] =
+            compute_delivery_metrics();
+        s.remove();
 
-            std::cout << "Read without delay: " << read_tm_without_delay << std::endl;
-            std::cout << "Read with delay: " << read_tm_with_delay << std::endl;
+        std::stringstream ss;
+        ss << "Read without delay: " << read_tm_without_delay << std::endl;
+        ss << "Read with delay: " << read_tm_with_delay << std::endl;
 
-            std::cout << "Write without delay: " << write_tm_without_delay << std::endl;
-            std::cout << "Write with delay: " << write_tm_with_delay << std::endl;
+        ss << "Write without delay: " << write_tm_without_delay << std::endl;
+        ss << "Write with delay: " << write_tm_with_delay << std::endl;
 
-            auto higher_rd_tm =
-                std::max(read_tm_without_delay, read_tm_with_delay);
-            auto lower_rd_tm =
-                std::min(read_tm_without_delay, read_tm_with_delay);
+        return {
+            {
+                DelayMesurement{read_tm_without_delay, write_tm_without_delay},
+                DelayMesurement{read_tm_with_delay, write_tm_with_delay}
+            },
+            ss.str()
+        };
+    }
 
-            EXPECT_LT( higher_rd_tm / lower_rd_tm, 15);
-            EXPECT_GT( write_tm_with_delay / write_tm_without_delay, 150);
-        }
+    TEST(SysFail, DelaysAfterTheSyscallWhenSoConfigured) {
+        auto [d, fail_msg] = mesure_delay_effects(1ms, {1, 1});
+
+        auto higher_rd_tm = std::max(d.without.rd, d.without.rd);
+        auto lower_rd_tm = std::min(d.without.rd, d.with.rd);
+
+        EXPECT_LT(higher_rd_tm / lower_rd_tm, 15) << fail_msg;
+        EXPECT_GT(d.with.wr / d.without.wr, 150) << fail_msg;
+    }
+
+    TEST(SysFail, DelaysBeforeTheSyscallWhenSoConfigured) {
+        // Because sleep before has higher number of things happening after
+        // the sleep, the effect is less pronounced. This can be made more
+        // pronounced by bumping up the sleep, but this is good balance between
+        // reliably demonstrating sysfail injects delay and at the same time
+        // not slowing the test down too much, it still finishes in <1s.
+        auto [d, fail_msg] = mesure_delay_effects(2ms, {1, 0});
+
+        auto higher_rd_tm = std::max(d.without.rd, d.without.rd);
+        auto lower_rd_tm = std::min(d.without.rd, d.with.rd);
+
+        // Less pronounced effect            v
+        EXPECT_GT(d.with.rd / d.without.rd, 25) << fail_msg;
+        EXPECT_GT(d.with.wr / d.without.wr, 150) << fail_msg;
     }
 }
