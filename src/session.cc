@@ -250,10 +250,8 @@ void sysfail::ActiveSession::fail_maybe(ucontext_t *ctx) {
             auto err_p = p_dist(rnd_eng);
             auto e = o->second.error_by_cumulative_p.lower_bound(err_p);
             auto after_p = p_dist(rnd_eng);
-            if (o->second.fail.after_bias) {
-                if (after_p < o->second.fail.after_bias) {
-                    fail_with = e->second;
-                }
+            if (o->second.fail.after_bias && (after_p < o->second.fail.after_bias)) {
+                fail_with = e->second;
             } else {
                 if (e != o->second.error_by_cumulative_p.end()) {
                     // kernel returns negative 0 - 4096 error codes in %rax
@@ -266,11 +264,11 @@ void sysfail::ActiveSession::fail_maybe(ucontext_t *ctx) {
 
     continue_syscall(ctx);
 
-    if (fail_with) {
-        regs[REG_RAX] = -fail_with;
-    }
     if (delay_after.count()) {
         sleep(delay_after);
+    }
+    if (fail_with) {
+        regs[REG_RAX] = -fail_with;
     }
 }
 
@@ -418,14 +416,4 @@ void sysfail::Session::remove(pid_t tid) {
 void sysfail::Session::discover_threads() {
     std::shared_lock<std::shared_mutex> l(lck);
     session->discover_threads();
-}
-
-extern "C" {
-    sysfail_session_t* start(const sysfail_plan_t *plan) {
-        auto session = new sysfail::Session({});
-        auto stop = [](void* data) {
-                delete static_cast<sysfail::Session*>(data);
-            };
-        return new sysfail_session_t{session, stop};
-    }
 }

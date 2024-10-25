@@ -104,7 +104,6 @@ namespace sysfail {
         void discover_threads();
     };
 
-    std::shared_ptr<ActiveSession> session = nullptr;
 }
 
 #endif

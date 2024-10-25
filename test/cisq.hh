@@ -13,7 +13,18 @@
 // directly like sysfail SIGSYS handler does, because this is built as a
 // shared-lib too and its syscalls will be intercepted just like libc's.
 namespace Cisq {
-    extern std::runtime_error err_msg(const char* msg, int op_errno);
+    class Err : public std::runtime_error {
+        int op_errno;
+
+    public:
+        Err(const char* msg, int op_errno);
+
+        Err& operator=(const Err& other);
+
+        int err() const;
+    };
+
+    std::string err_msg(const char* msg, int op_errno);
 
     struct TmpFile {
         const std::string path;
@@ -23,9 +34,9 @@ namespace Cisq {
 
         ~TmpFile();
 
-        std::expected<std::string, std::runtime_error> read();
+        std::expected<std::string, Err> read();
 
-        std::expected<void, std::runtime_error> write(const std::string& content);
+        std::expected<void, Err> write(const std::string& content);
     };
 
     template <typename T> struct Pipe {
@@ -35,11 +46,14 @@ namespace Cisq {
             int fds[2];
             auto ret = pipe2(fds, O_DIRECT);
             if (ret < 0) {
-                throw std::runtime_error(
-                    err_msg("Failed to create pipe", errno));
+                throw Err("Failed to create pipe", errno);
             }
             rd_fd = fds[0];
             wr_fd = fds[1];
+            ret = fcntl(wr_fd, F_SETPIPE_SZ, 1 * 1024 * 1024);
+            if (ret < 0) {
+                throw Err("Failed to set pipe size", errno);
+            }
         }
 
         ~Pipe() {
@@ -47,24 +61,33 @@ namespace Cisq {
             syscall(SYS_close, wr_fd);
         }
 
-        std::expected<T, std::runtime_error> read() {
+        std::expected<T, Err> read() {
             T t;
             auto bytes = syscall(SYS_read, rd_fd, &t, sizeof(t));
             if (bytes < 0) {
-                return std::unexpected(err_msg("Failed to read pipe", errno));
+                return std::unexpected(Err("Failed to read pipe", errno));
             }
             return t;
         }
 
-        std::expected<int, std::runtime_error> write(const T& t) {
+        std::expected<int, Err> write(const T& t) {
             auto bytes = syscall(SYS_write, wr_fd, &t, sizeof(t));
 
             if (bytes < 0) {
-                return std::unexpected(err_msg("Failed to write file", errno));
+                return std::unexpected(Err("Failed to write file", errno));
             }
 
             return static_cast<int>(bytes);
         }
+    };
+
+    class AsyncRead {
+        const int fd;
+
+    public:
+        AsyncRead(const int fd);
+
+        ~AsyncRead();
     };
 }
 

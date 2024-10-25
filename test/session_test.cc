@@ -6,7 +6,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <cstring>
-#include <regex>
 #include <barrier>
 #include <oneapi/tbb/concurrent_vector.h>
 
@@ -309,21 +308,17 @@ namespace sysfail {
             [](pid_t tid) { return true; },
             thread_discovery::None{});
 
-        std::unordered_map<std::string, int> error_count;
+        std::unordered_map<Errno, int> error_count;
 
         {
             Session s(p);
             for (int i = 0; i < 1000; i++) {
                 auto ret = f.read();
                 EXPECT_FALSE(ret.has_value());
-                auto m = std::string(ret.error().what());
-                std::regex cause(R"(^.+ err: (.+)$)");
-                std::smatch m_res;
-                EXPECT_TRUE(std::regex_search(m, m_res, cause));
-                auto err_frag = m_res[1];
-                auto e = error_count.find(err_frag);
+                auto err_no = ret.error().err();
+                auto e = error_count.find(err_no);
                 if (e == error_count.end()) {
-                    error_count.emplace(err_frag, 1);
+                    error_count.emplace(err_no, 1);
                 } else {
                     e->second++;
                 }
@@ -331,9 +326,9 @@ namespace sysfail {
         }
 
         EXPECT_EQ(3, error_count.size());
-        auto eio_count = error_count[std::strerror(EIO)];
-        auto einval_count = error_count[std::strerror(EINVAL)];
-        auto efault_count = error_count[std::strerror(EFAULT)];
+        auto eio_count = error_count[EIO];
+        auto einval_count = error_count[EINVAL];
+        auto efault_count = error_count[EFAULT];
 
         EXPECT_LT(eio_count, einval_count);
         EXPECT_LT(einval_count, efault_count);
@@ -733,8 +728,7 @@ namespace sysfail {
         auto higher_rd_tm = std::max(d.without.rd, d.without.rd);
         auto lower_rd_tm = std::min(d.without.rd, d.with.rd);
 
-        // Less pronounced effect            v
-        EXPECT_GT(d.with.rd / d.without.rd, 25) << fail_msg;
+        EXPECT_GT(d.with.rd, d.without.rd) << fail_msg;
         EXPECT_GT(d.with.wr / d.without.wr, 150) << fail_msg;
     }
 

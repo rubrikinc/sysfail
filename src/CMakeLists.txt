@@ -11,6 +11,7 @@ add_library(sysfail SHARED
     thdmon.cc
     signal.cc
     restore.S
+    cwrapper.cc
 )
 
 target_link_libraries(sysfail TBB::tbb)

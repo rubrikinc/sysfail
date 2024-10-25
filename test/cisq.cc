@@ -4,8 +4,12 @@
 #include <stdexcept>
 #include <cassert>
 #include <cstring>
+#include <format>
+#include <exception>
+#include <functional>
 
 #include "cisq.hh"
+#include "log.hh"
 
 namespace {
     std::string makeTempFile() {
@@ -18,22 +22,20 @@ namespace {
         return path;
     }
 
-    std::expected<int, std::runtime_error> open_file(
+    std::expected<int, Cisq::Err> open_file(
         const std::string& path,
         int flags
     ) {
         auto fd = syscall(SYS_openat, AT_FDCWD, path.c_str(), flags);
         if (fd < 0) {
-            return std::unexpected(std::runtime_error(
-                Cisq::err_msg("Failed to open file", errno)));
+            return std::unexpected(Cisq::Err("Failed to open file", errno));
         }
         return fd;
     }
 }
 
-std::runtime_error Cisq::err_msg(const char* msg, int op_errno) {
-    return std::runtime_error(
-        std::string(msg) + ", err: " + std::strerror(op_errno));
+std::string Cisq::err_msg(const char* msg, int op_errno) {
+    return std::format("{}, err: {}", msg, std::strerror(op_errno));
 }
 
 Cisq::TmpFile::TmpFile() : path(makeTempFile()) {}
@@ -42,7 +44,7 @@ Cisq::TmpFile::~TmpFile() {
     unlink(path.c_str());
 }
 
-std::expected<std::string, std::runtime_error> Cisq::TmpFile::read() {
+std::expected<std::string, Cisq::Err> Cisq::TmpFile::read() {
     std::lock_guard<std::mutex> lock(m);
     auto fd = open_file(path, O_RDONLY);
     if (!fd.has_value()) {
@@ -54,13 +56,13 @@ std::expected<std::string, std::runtime_error> Cisq::TmpFile::read() {
     auto read_err = errno;
     syscall(SYS_close, fd.value());
     if (bytes < 0) {
-        return std::unexpected(err_msg("Failed to read file", read_err));
+        return std::unexpected(Cisq::Err("Failed to read file", read_err));
     }
     content.append(buffer, bytes);
     return content;
 }
 
-std::expected<void, std::runtime_error> Cisq::TmpFile::write(
+std::expected<void, Cisq::Err> Cisq::TmpFile::write(
     const std::string& content
 ) {
     std::lock_guard<std::mutex> lock(m);
@@ -72,7 +74,55 @@ std::expected<void, std::runtime_error> Cisq::TmpFile::write(
     auto write_err = errno;
     syscall(SYS_close, fd.value());
     if (bytes < 0) {
-        return std::unexpected(err_msg("Failed to write file", errno));
+        return std::unexpected(Err("Failed to write file", errno));
     }
     return {};
+}
+
+Cisq::Err::Err(
+    const char* msg,
+    int op_errno
+): std::runtime_error(msg), op_errno(op_errno) {}
+
+Cisq::Err& Cisq::Err::operator=(const Err& other) {
+    std::runtime_error::operator=(other);
+    op_errno = other.op_errno;
+    return *this;
+}
+
+int Cisq::Err::err() const {
+    return op_errno;
+}
+
+static std::expected<void, Cisq::Err> change_flag(
+    int fd,
+    std::function<int(int)> f
+) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags == -1) {
+        return std::unexpected(Cisq::Err("fcntl F_GETFL", errno));
+    }
+
+    flags = f(flags);
+
+    if (fcntl(fd, F_SETFL, flags) == -1) {
+        return std::unexpected(Cisq::Err("fcntl F_SETFL", errno));
+    }
+
+    return {};
+}
+
+Cisq::AsyncRead::AsyncRead(const int fd): fd(fd) {
+    auto ret = change_flag(fd, [](int flags) { return flags | O_NONBLOCK; });
+    if (!ret) {
+        throw ret.error();
+    }
+}
+
+Cisq::AsyncRead::~AsyncRead() {
+    auto ret = change_flag(fd, [](int flags) { return flags & ~O_NONBLOCK; });
+    if (!ret) {
+        sysfail::log(ret.error().what());
+        std::terminate();
+    }
 }

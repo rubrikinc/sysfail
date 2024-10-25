@@ -81,7 +81,7 @@ namespace sysfail {
             thd_disc(thread_discovery::None{}) {}
     };
 
-    struct Stats{
+    struct Stats{ // TODO: delete me
         long intercepted;
         long failed_before;
         long failed_after;

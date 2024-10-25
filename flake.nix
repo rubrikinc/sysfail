@@ -18,6 +18,7 @@
             gnumake
             pkg-config
             gdb
+            valgrind
           ];
 
           buildInputs = with pkgs; [
