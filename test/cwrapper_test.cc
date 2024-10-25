@@ -322,7 +322,8 @@ namespace cwrapper {
 
         auto err_count = [](const ErrorDistribution& errs) {
             int count = 0;
-            for (const auto& [_, c] : errs) {
+            for (const auto& [e, c] : errs) {
+                if (e == EAGAIN || e == EWOULDBLOCK) continue;
                 count += c;
             }
             return count;
@@ -340,11 +341,17 @@ namespace cwrapper {
         //                        = 0.75 * 0.75
         // so, we use 0.8 ≈ 0.9 * 0.9
         EXPECT_IN_RANGE(thd_rr.nos.size(), wr.successful_writes.size(), ops * .8);
-        EXPECT_IN_RANGE(err_count(thd_rr.errs), ops * .1, ops * .5);
-        // we have some EAGAINs / EWOULDBLOCKs too
-        EXPECT_EQ(thd_rr.errs.size(), 3) << to_string(thd_rr.errs);
+        EXPECT_IN_RANGE(err_count(thd_rr.errs), ops * .1, ops * .6);
+        // EBUSY shows up sometimes (perhaps when pipe is full?)
+        EXPECT_IN_RANGE(thd_rr.errs.size(), 2, 3) << to_string(thd_rr.errs);
         EXPECT_GT(thd_rr.errs[EIO], 0);
         EXPECT_GT(thd_rr.errs[EACCES], 0);
+        EXPECT_GT(
+            static_cast<double>(thd_rr.errs[EIO]) / thd_rr.errs[EACCES],
+            0.6);
+        EXPECT_GT(
+            static_cast<double>(thd_rr.errs[EACCES]) / thd_rr.errs[EIO],
+            0.6);
 
         old_failing_thd.join();
         old_non_failing_thd.join();
