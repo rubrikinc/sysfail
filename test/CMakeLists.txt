@@ -48,9 +48,11 @@ else()
     message(STATUS "Valgrind not found")
 endif()
 
+set(neg_test ${CMAKE_CURRENT_SOURCE_DIR}/neg_test.sh)
+
 find_program(GO_BIN go)
 if (GO_BIN)
-    message(STATUS "Golang binary found: ${GO_BIN}")
+    message(STATUS "Golang found: ${GO_BIN}")
     set(GoFFI_TestBin ${CMAKE_CURRENT_BINARY_DIR}/go_ffi)
     set(GoFFI_Src ${CMAKE_CURRENT_SOURCE_DIR}/ffi.go)
 
@@ -70,6 +72,17 @@ if (GO_BIN)
         NAME TestGoFFI
         COMMAND ${CMAKE_COMMAND} -E env LD_LIBRARY_PATH=${LibPath} ${GoFFI_TestBin}
         WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+
+    add_test(
+        NAME TestGoFFI.NoSysfail
+        COMMAND ${CMAKE_COMMAND} -E env LD_LIBRARY_PATH=${LibPath} EXPECT_CODE=123 NO_SYSFAIL=y  ${neg_test} ${GoFFI_TestBin}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+
+    add_test(
+        NAME TestGoFFI.IncorrectErrorCode
+        COMMAND ${CMAKE_COMMAND} -E env LD_LIBRARY_PATH=${LibPath} EXPECT_CODE=100 EXIT_ERRNO=1  ${neg_test} ${GoFFI_TestBin}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+
 else()
     message(STATUS "Golang not found")
 endif()

@@ -19,6 +19,7 @@ import "C"
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"syscall"
 	"unsafe"
 )
@@ -73,14 +74,23 @@ func mk_sysfail_session(
 }
 
 func enable_sysfail_and_exit(status uintptr) syscall.Errno {
-	sysfail := mk_sysfail_session(syscall.SYS_EXIT_GROUP, syscall.ESRCH)
+	errno := syscall.ESRCH
+	errnoStrOverride := os.Getenv("EXIT_ERRNO")
+	if errnoStrOverride != "" {
+		errnoOverride, err := strconv.Atoi(errnoStrOverride)
+		if err == nil {
+			errno = syscall.Errno(errnoOverride)
+		}
+	}
+
+	sysfail := mk_sysfail_session(syscall.SYS_EXIT_GROUP, errno)
 	defer func() {
 		if sysfail != nil {
 			C.stop_sysfail(sysfail)
 		}
 	}()
 
-	_, _, errno := syscall.Syscall(syscall.SYS_EXIT_GROUP, status, 0, 0)
+	_, _, errno = syscall.Syscall(syscall.SYS_EXIT_GROUP, status, 0, 0)
 	return errno
 }
 
@@ -88,10 +98,10 @@ func main() {
 	// *Test-1*
 	// The process would fail (status 123) if sysfail does not block exit_group
 	errno := enable_sysfail_and_exit(123)
-	// Run the following commmands to observe the negative case manually:
+	// Run the following commmands to observe Test-1's negative case manually:
 	//   $ cd <build dir>
 	//   $ env LD_LIBRARY_PATH=src NO_SYSFAIL=y ./test/go_ffi
-	//   $ echo "Exit status: $?"
+	//   $ echo "Exit status: $?" # Expect 123
 
 	// *Test-2*
 	// If sysfail does not return correct exit-code, now exit_group isn't
@@ -101,6 +111,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Expected ESRCH, got %v\n", errno)
 		os.Exit(100)
 	}
+	// Run the following commmands to observe Test-2's negative case manually:
+	//   $ cd <build dir>
+	//   $ env LD_LIBRARY_PATH=src EXIT_ERRNO=1 ./test/go_ffi
+	//   $ echo "Exit status: $?" # Expect 100
 
 	fmt.Println("Test passed!")
 }
