@@ -451,10 +451,6 @@ namespace cwrapper {
         new_failing_thd.join();
     }
 
-    // Test add / remove API
-    // Test on-demand thd-disc
-    // Test stop
-    // Test freeing the plan completely (valgrind test)
     TEST(CWrapper, TestAPIsForManualControlOfFailureInjectionOnThreads) {
         // TODO: randomly reverse outcomes
         auto plan = mk_plan(
@@ -622,5 +618,44 @@ namespace cwrapper {
         thd2.join();
     }
 
+    // Test freeing the plan completely (valgrind driven test)
+    TEST(CWrapper, TestMemorySafetyOfABI) {
+        auto test_tid = gettid();
+        uint32_t poll_itvl_us = 1000;
+        auto plan = mk_plan(
+            mk_outcome(
+                SYS_read,
+                {1, 0},
+                {0, 0},
+                0,
+                nullptr,
+                nullptr,
+                {{EIO, 1}},
+                mk_outcome(
+                    SYS_write,
+                    {1, 0},
+                    {0, 0},
+                    0,
+                    nullptr,
+                    nullptr,
+                    {{EIO, 1}})),
+            sysfail_tdisk_poll,
+            {.poll_itvl_usec = poll_itvl_us},
+            &test_tid,
+            [](void* ctx, auto tid) {
+                return tid != *reinterpret_cast<sysfail_tid_t*>(ctx);
+            });
+
+        auto s = sysfail_start(plan.get());
+
+        plan.reset();
+
+        std::this_thread::sleep_for(
+            std::chrono::microseconds(poll_itvl_us * 2));
+
+        s->stop(s);
+    }
+
     // Test delay
+
 }

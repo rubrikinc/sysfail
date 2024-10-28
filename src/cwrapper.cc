@@ -46,7 +46,7 @@ extern "C" {
                             std::chrono::microseconds(c_plan->config.poll_itvl_usec));
                     default:
                         std::cerr << "Invalid thread discovery strategy, "
-                                  << ", defaulting to `none`" << std::endl;
+                                  << "defaulting to `none`" << std::endl;
                         return thread_discovery::None{};
                 }
             }()};
