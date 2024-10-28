@@ -16,6 +16,8 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 # Enable testing
 enable_testing()
 
+set(LibPath ${CMAKE_BINARY_DIR}/src)
+
 # Add subdirectories for source code and tests
 add_subdirectory(src)
 add_subdirectory(test)

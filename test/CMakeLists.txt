@@ -29,14 +29,14 @@ target_link_libraries(main PRIVATE GTest::GTest GTest::Main sysfail cisq)
 
 gtest_discover_tests(main)
 
-find_program(VALGRIND_EXECUTABLE valgrind)
+find_program(VALGRIND_BIN valgrind)
 
-if (VALGRIND_EXECUTABLE)
-    message(STATUS "Valgrind found: ${VALGRIND_EXECUTABLE}")
+if (VALGRIND_BIN)
+    message(STATUS "Valgrind found: ${VALGRIND_BIN}")
 
     add_test(
-        NAME cwrapper_memchecked_test
-        COMMAND ${VALGRIND_EXECUTABLE}
+        NAME CWrapperMemcheckedTest
+        COMMAND ${VALGRIND_BIN}
             --error-exitcode=1
             --tool=memcheck
             --leak-check=full
@@ -48,3 +48,28 @@ else()
     message(STATUS "Valgrind not found")
 endif()
 
+find_program(GO_BIN go)
+if (GO_BIN)
+    message(STATUS "Golang binary found: ${GO_BIN}")
+    set(GoFFI_TestBin ${CMAKE_CURRENT_BINARY_DIR}/go_ffi)
+    set(GoFFI_Src ${CMAKE_CURRENT_SOURCE_DIR}/ffi.go)
+
+    add_custom_command(
+        OUTPUT ${GoFFI_TestBin}
+        COMMAND ${CMAKE_COMMAND} -E env CGO_LDFLAGS=-L${LibPath} ${GO_BIN} ARGS build -o ${GoFFI_TestBin} ${GoFFI_Src}
+        DEPENDS ${GoFFI_Src}
+        COMMENT "Building ffi.go"
+    )
+
+    add_custom_target(
+        ffi.go ALL
+        DEPENDS ${GoFFI_TestBin}
+    )
+
+    add_test(
+        NAME TestGoFFI
+        COMMAND ${CMAKE_COMMAND} -E env LD_LIBRARY_PATH=${LibPath} ${GoFFI_TestBin}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+else()
+    message(STATUS "Golang not found")
+endif()

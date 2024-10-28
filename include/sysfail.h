@@ -19,7 +19,7 @@ struct {
 
 typedef void sysfail_userdata_t;
 
-typedef bool(*sysfail_invocation_predicate_t)(sysfail_userdata_t*, const greg_t*);
+typedef int(*sysfail_invocation_predicate_t)(sysfail_userdata_t*, const greg_t*);
 
 struct {
     sysfail_probability_t fail;
@@ -33,7 +33,7 @@ struct {
     sysfail_error_wt_t error_wts[];
 } typedef sysfail_outcome_t;
 
-typedef bool(*sysfail_thread_predicate_t)(sysfail_userdata_t*, sysfail_tid_t);
+typedef int(*sysfail_thread_predicate_t)(sysfail_userdata_t*, sysfail_tid_t);
 
 enum {
     sysfail_tdisc_none  = 0,

@@ -221,7 +221,7 @@ namespace cwrapper {
         return wr;
     };
 
-    static bool fd_exists(void *ctx, const greg_t* regs) {
+    static int fd_exists(void *ctx, const greg_t* regs) {
         auto fds = reinterpret_cast<std::unordered_set<int>*>(ctx);
         return fds->find(regs[REG_RDI]) != fds->end();
     };
@@ -313,7 +313,7 @@ namespace cwrapper {
             sysfail_tdisk_poll,
             {.poll_itvl_usec = static_cast<uint32_t>(thd_disc_poll_tm_us)},
             &failing_thds,
-            [](void* ctx, auto tid) {
+            [](void* ctx, auto tid) -> int {
                 auto ft = reinterpret_cast<decltype(failing_thds)*>(ctx);
                 std::lock_guard<std::mutex> l(ft->m);
                 return ft->thds.find(tid) != ft->thds.end();
@@ -466,7 +466,7 @@ namespace cwrapper {
                     {0, 0},
                     0,
                     nullptr,
-                    [](void* ctx, auto regs) {
+                    [](void* ctx, auto regs) -> int{
                         return regs[REG_RDI] > 2; // let test print
                     },
                     {{EIO, 1}})),
@@ -640,7 +640,7 @@ namespace cwrapper {
             sysfail_tdisk_poll,
             {.poll_itvl_usec = poll_itvl_us},
             &test_tid,
-            [](void* ctx, auto tid) {
+            [](void* ctx, auto tid) -> int {
                 return tid != *reinterpret_cast<sysfail_tid_t*>(ctx);
             });
 
@@ -710,5 +710,10 @@ namespace cwrapper {
             delay_after_avg / 10,
             delay_after_avg / 3) << "before: " << delay_before_avg.count()
                                  << " after: " << delay_after_avg.count();
+    }
+
+    TEST(CWrapper, TestNullPlan) {
+        auto s = sysfail_start(nullptr);
+        EXPECT_FALSE(s);
     }
 }

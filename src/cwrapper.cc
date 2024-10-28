@@ -7,6 +7,8 @@ extern "C" {
 extern "C" {
     using namespace sysfail;
     sysfail_session_t* sysfail_start(const sysfail_plan_t *c_plan) {
+        if (!c_plan) return nullptr;
+
         std::unordered_map<Syscall, const Outcome> outcomes;
         for (auto o = c_plan->syscall_outcomes; o != nullptr; o = o->next) {
             std::map<Errno, double> error_weights;
