@@ -81,22 +81,9 @@ namespace sysfail {
             thd_disc(thread_discovery::None{}) {}
     };
 
-    struct Stats{ // TODO: delete me
-        long intercepted;
-        long failed_before;
-        long failed_after;
-        Stats() : intercepted(0), failed_before(0), failed_after(0) {}
-        Stats(long _intercepted, long _failed_before, long _failed_after) :
-            intercepted(_intercepted),
-            failed_before(_failed_before),
-            failed_after(_failed_after) {}
-    };
-
     class Session {
         std::shared_mutex lck;
-        char on; // TODO: delete me
     public:
-        // Must not be called only once
         explicit Session(const Plan& _plan);
         ~Session();
         void add();

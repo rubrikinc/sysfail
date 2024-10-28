@@ -15,7 +15,6 @@
 #include <oneapi/tbb/concurrent_vector.h>
 
 #include "cisq.hh"
-#include "log.hh" // TODO: delete me!
 
 // Do not include any production headers  other than `sysfail.h` here.
 // This is a dedicated cwrapper test-suite (purely meant for testing the C-ABI).
@@ -655,7 +654,6 @@ namespace cwrapper {
         s->stop(s);
     }
 
-    // Test delay
     TEST(CWrapper, TestDelayInjection) {
         auto plan = mk_plan(
             mk_outcome(
