@@ -31,6 +31,10 @@ func mk_sysfail_session(
 	syscall int,
 	errno syscall.Errno,
 ) *C.sysfail_session_t {
+	if os.Getenv("NO_SYSFAIL") == "y" {
+		return nil
+	}
+
 	sz := (C.sizeof_sysfail_syscall_outcome_t + C.sizeof_sysfail_error_wt_t)
 	outcome := (*C.sysfail_syscall_outcome_t)(C.malloc(C.ulong(sz)))
 	defer C.free(unsafe.Pointer(outcome))
@@ -70,7 +74,11 @@ func mk_sysfail_session(
 
 func enable_sysfail_and_exit(status uintptr) syscall.Errno {
 	sysfail := mk_sysfail_session(syscall.SYS_EXIT_GROUP, syscall.ESRCH)
-	defer C.stop_sysfail(sysfail)
+	defer func() {
+		if sysfail != nil {
+			C.stop_sysfail(sysfail)
+		}
+	}()
 
 	_, _, errno := syscall.Syscall(syscall.SYS_EXIT_GROUP, status, 0, 0)
 	return errno
@@ -80,6 +88,10 @@ func main() {
 	// *Test-1*
 	// The process would fail (status 123) if sysfail does not block exit_group
 	errno := enable_sysfail_and_exit(123)
+	// Run the following commmands to observe the negative case manually:
+	//   $ cd <build dir>
+	//   $ env LD_LIBRARY_PATH=src NO_SYSFAIL=y ./test/go_ffi
+	//   $ echo "Exit status: $?"
 
 	// *Test-2*
 	// If sysfail does not return correct exit-code, now exit_group isn't
