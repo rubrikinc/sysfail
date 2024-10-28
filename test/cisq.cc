@@ -7,6 +7,7 @@
 #include <format>
 #include <exception>
 #include <functional>
+#include <sys/timex.h>
 
 #include "cisq.hh"
 #include "log.hh"
@@ -125,4 +126,26 @@ Cisq::AsyncRead::~AsyncRead() {
         sysfail::log(ret.error().what());
         std::terminate();
     }
+}
+
+std::expected<
+    std::chrono::system_clock::time_point,
+    Cisq::Err
+> Cisq::tm_adjtimex() {
+    // libc `adjtimex` wrapper doesn't appear to call the syscall at all,
+    // use lib'c wrapper to directly call it.
+    struct timex t{0};
+
+    auto ret = syscall(SYS_adjtimex, &t);
+    if (ret == -1) {
+        return std::unexpected(Cisq::Err("adjtimex failed", errno));
+    }
+
+    using ns = std::chrono::nanoseconds;
+    using us = std::chrono::microseconds;
+    using s = std::chrono::seconds;
+
+    return std::chrono::system_clock::time_point(
+        s(t.time.tv_sec) +
+        (t.status & STA_NANO ? ns(t.time.tv_usec) : us(t.time.tv_usec)));
 }

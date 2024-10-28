@@ -452,7 +452,6 @@ namespace cwrapper {
     }
 
     TEST(CWrapper, TestAPIsForManualControlOfFailureInjectionOnThreads) {
-        // TODO: randomly reverse outcomes
         auto plan = mk_plan(
             mk_outcome(
                 SYS_read,
@@ -657,5 +656,61 @@ namespace cwrapper {
     }
 
     // Test delay
+    TEST(CWrapper, TestDelayInjection) {
+        auto plan = mk_plan(
+            mk_outcome(
+                SYS_adjtimex,
+                {1, 0},
+                {1, .8},
+                1000,
+                nullptr,
+                nullptr,
+                {}),
+            sysfail_tdisc_none,
+            {},
+            nullptr,
+            nullptr);
 
+        std::unique_ptr<sysfail_session_t, void(*)(sysfail_session_t*)> s(
+            sysfail_start(plan.get()),
+            [](sysfail_session_t* s) { s->stop(s); });
+
+
+        auto ops = 1000;
+
+        std::vector<std::chrono::nanoseconds> delay_before, delay_after;
+
+        for (int i = 0; i < ops; i++) {
+            struct timex t{0};
+            auto start_tm = std::chrono::system_clock::now();
+            auto tm_res = Cisq::tm_adjtimex();
+            auto end_tm = std::chrono::system_clock::now();
+
+            ASSERT_TRUE(tm_res.has_value())
+                << "adjtimex failed "
+                << tm_res.error().what();
+            auto sys_time = tm_res.value();
+
+            delay_before.push_back(sys_time - start_tm);
+            delay_after.push_back(end_tm - sys_time);
+        }
+
+        auto delay_before_avg = std::reduce(
+            delay_before.begin(),
+            delay_before.end(),
+            0ns,
+            std::plus<std::chrono::nanoseconds>()) / ops;
+
+        auto delay_after_avg = std::reduce(
+            delay_after.begin(),
+            delay_after.end(),
+            0ns,
+            std::plus<std::chrono::nanoseconds>()) / ops;
+
+        EXPECT_IN_RANGE(
+            delay_before_avg,
+            delay_after_avg / 10,
+            delay_after_avg / 3) << "before: " << delay_before_avg.count()
+                                 << " after: " << delay_after_avg.count();
+    }
 }

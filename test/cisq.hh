@@ -89,5 +89,7 @@ namespace Cisq {
 
         ~AsyncRead();
     };
+
+    std::expected<std::chrono::system_clock::time_point, Err> tm_adjtimex();
 }
 
