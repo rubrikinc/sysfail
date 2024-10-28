@@ -72,6 +72,24 @@ namespace cwrapper {
         void* ctx,
         sysfail_thread_predicate_t selector
     ) {
+        std::random_device rd;
+        thread_local std::mt19937 rnd_eng(rd());
+        bool reverse_outcomes = std::binomial_distribution<bool>{}(rnd_eng);
+
+        if (reverse_outcomes) {
+            sysfail_syscall_outcome_t* prev = nullptr;
+            auto curr = outcomes;
+            while (curr) {
+                auto next = curr->next;
+                curr->next = prev;
+                prev = curr;
+                curr = next;
+            }
+            outcomes = prev;
+        }
+
+        std::binomial_distribution d;
+
         std::unique_ptr<sysfail_plan_t, plan_cleanup_t> plan(
             new sysfail_plan_t,
             [](sysfail_plan_t* p) {
@@ -276,7 +294,6 @@ namespace cwrapper {
             std::chrono::duration_cast<std::chrono::microseconds>(thd_disc_poll_tm)
                 .count();
 
-        // TODO: randomly reverse outcomes
         auto plan = mk_plan(
             mk_outcome(
                 SYS_read,
@@ -306,6 +323,8 @@ namespace cwrapper {
         std::unique_ptr<sysfail_session_t, void(*)(sysfail_session_t*)> s(
             sysfail_start(plan.get()),
             [](sysfail_session_t* s) { s->stop(s); });
+
+        plan.reset();
 
         // allow sysfail to discove threads
         std::this_thread::sleep_for(thd_disc_poll_tm);
@@ -431,4 +450,177 @@ namespace cwrapper {
 
         new_failing_thd.join();
     }
+
+    // Test add / remove API
+    // Test on-demand thd-disc
+    // Test stop
+    // Test freeing the plan completely (valgrind test)
+    TEST(CWrapper, TestAPIsForManualControlOfFailureInjectionOnThreads) {
+        // TODO: randomly reverse outcomes
+        auto plan = mk_plan(
+            mk_outcome(
+                SYS_read,
+                {1, 0},
+                {0, 0},
+                0,
+                nullptr,
+                nullptr,
+                {{EIO, 1}},
+                mk_outcome(
+                    SYS_write,
+                    {1, 0},
+                    {0, 0},
+                    0,
+                    nullptr,
+                    [](void* ctx, auto regs) {
+                        return regs[REG_RDI] > 2; // let test print
+                    },
+                    {{EIO, 1}})),
+            sysfail_tdisc_none,
+            {},
+            nullptr,
+            nullptr);
+
+        std::unique_ptr<sysfail_session_t, void(*)(sysfail_session_t*)> s(
+            sysfail_start(plan.get()),
+            [](sysfail_session_t* s) { s->stop(s); });
+
+        plan.reset();
+
+        Pipe<int> p;
+        std::barrier b(2);
+
+        ReadResult rr;
+        WriteResult wr;
+        sysfail_tid_t test_tid;
+
+        std::thread thd1([&]() {
+            test_tid = gettid();
+
+            b.arrive_and_wait(); // 1
+
+            rr = read_n(p, 1);
+
+            b.arrive_and_wait(); // 2
+
+            s->add_this_thread(s.get());
+
+            b.arrive_and_wait(); // 3
+
+            rr = read_n(p, 1);
+
+            b.arrive_and_wait(); // 4
+            b.arrive_and_wait(); // 5
+
+            rr = read_n(p, 1);
+
+            b.arrive_and_wait(); // 6
+            b.arrive_and_wait(); // 7
+
+            rr = read_n(p, 1);
+
+            b.arrive_and_wait(); // 8
+        });
+
+        b.arrive_and_wait(); // 1
+
+        wr = write_n(p, 1, 0);
+        EXPECT_TRUE(wr.successful_writes.empty());
+        EXPECT_EQ(err_count(wr.errs), 1);
+
+        s->remove_this_thread(s.get());
+
+        wr = write_n(p, 1, 1);
+        EXPECT_EQ(wr.successful_writes.size(), 1);
+        EXPECT_EQ(err_count(wr.errs), 0);
+
+        b.arrive_and_wait(); // 2
+
+        EXPECT_EQ(rr.nos, std::vector<int>{1});
+        EXPECT_EQ(err_count(rr.errs), 0);
+
+        b.arrive_and_wait(); // 3
+
+        wr = write_n(p, 1, 2);
+        EXPECT_EQ(wr.successful_writes, std::unordered_set<int>{2});
+        EXPECT_EQ(err_count(wr.errs), 0);
+
+        b.arrive_and_wait(); // 4
+
+        EXPECT_TRUE(rr.nos.empty());
+        EXPECT_EQ(err_count(rr.errs), 1);
+
+        s->remove_thread(s.get(), test_tid);
+
+        b.arrive_and_wait(); // 5
+        b.arrive_and_wait(); // 6
+
+        EXPECT_EQ(rr.nos, std::vector<int>{2});
+        EXPECT_EQ(err_count(rr.errs), 0);
+
+        s->add_thread(s.get(), test_tid);
+
+        wr = write_n(p, 1, 3);
+        EXPECT_EQ(wr.successful_writes, std::unordered_set<int>{3});
+        EXPECT_EQ(err_count(wr.errs), 0);
+
+        b.arrive_and_wait(); // 7
+        b.arrive_and_wait(); // 8
+
+        EXPECT_TRUE(rr.nos.empty());
+        EXPECT_EQ(err_count(rr.errs), 1);
+
+        thd1.join();
+
+        std::thread thd2([&]() {
+            b.arrive_and_wait(); // 9
+
+            rr = read_n(p, 1);
+
+            b.arrive_and_wait(); // 10
+            b.arrive_and_wait(); // 11
+
+            wr = write_n(p, 1, 4);
+
+            b.arrive_and_wait(); // 12
+            b.arrive_and_wait(); // 13
+
+            wr = write_n(p, 1, 5);
+
+            b.arrive_and_wait(); // 14
+        });
+
+        // sleep for a bit, polling thd detector is off, but in case there is a
+        // bug, allow it to discover the thread and failure-inject
+        std::this_thread::sleep_for(100ms);
+
+        b.arrive_and_wait(); // 9
+        b.arrive_and_wait(); // 10
+
+        EXPECT_EQ(rr.nos, std::vector<int>{3});
+        EXPECT_EQ(err_count(rr.errs), 0);
+
+        s->discover_threads(s.get());
+
+        b.arrive_and_wait(); // 11
+        b.arrive_and_wait(); // 12
+
+        EXPECT_TRUE(wr.successful_writes.empty());
+        EXPECT_EQ(err_count(wr.errs), 1);
+
+        s.reset(); // stopped
+
+        b.arrive_and_wait(); // 13
+        b.arrive_and_wait(); // 14
+
+        EXPECT_EQ(wr.successful_writes, std::unordered_set<int>{5});
+        EXPECT_EQ(err_count(wr.errs), 0);
+        rr = read_n(p, 1);
+        EXPECT_EQ(rr.nos, std::vector<int>{5});
+        EXPECT_EQ(err_count(rr.errs), 0);
+
+        thd2.join();
+    }
+
+    // Test delay
 }

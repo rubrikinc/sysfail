@@ -23,13 +23,19 @@ extern "C" {
                 [
                     e=o->outcome.eligible,
                     ctx=o->outcome.ctx
-                ](const greg_t* regs) -> bool { return e(ctx, regs);}};
+                ](const greg_t* regs) -> bool {
+                    if (!e) return true;
+                    return e(ctx, regs);
+                }};
             outcomes.insert({o->syscall, outcome});
         }
         auto selector = [
             s=c_plan->selector,
             ctx=c_plan->ctx
-        ](pid_t tid) -> bool { return s(ctx, tid); };
+        ](pid_t tid) -> bool {
+            if (!s) return true;
+            return s(ctx, tid);
+        };
         thread_discovery::Strategy tdisc_strategy{
             [&]() -> thread_discovery::Strategy {
                 switch (c_plan->strategy) {
@@ -50,10 +56,25 @@ extern "C" {
             selector,
             tdisc_strategy});
         return new sysfail_session_t{
-            session,
-            [](sysfail_session_t* s) {
+            .data = session,
+            .stop = [](sysfail_session_t* s) {
                 delete static_cast<sysfail::Session*>(s->data);
                 delete s;
+            },
+            .add_this_thread = [](sysfail_session_t* s) {
+                static_cast<sysfail::Session*>(s->data)->add();
+            },
+            .remove_this_thread = [](sysfail_session_t* s) {
+                static_cast<sysfail::Session*>(s->data)->remove();
+            },
+            .add_thread = [](sysfail_session_t* s, sysfail_tid_t tid) {
+                static_cast<sysfail::Session*>(s->data)->add(tid);
+            },
+            .remove_thread = [](sysfail_session_t* s, sysfail_tid_t tid) {
+                static_cast<sysfail::Session*>(s->data)->remove(tid);
+            },
+            .discover_threads = [](sysfail_session_t* s) {
+                static_cast<sysfail::Session*>(s->data)->discover_threads();
             }};
     }
 }
