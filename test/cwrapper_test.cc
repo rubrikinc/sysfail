@@ -96,16 +96,6 @@ namespace cwrapper {
         return plan;
     }
 
-    // Check
-    // 1. new thred auto discovered
-    // 2. write failures
-    // 2.1. failure-type ratio
-    // 2.2. before-after ratio (what read saw)
-    // 3. read failures
-    // 3.1. failure-type ratio
-    // 4. thread-selection, other thread should see no failures
-    // 5. call-selection, no failures on the wrong pipe
-
     bool accept_fd(const std::unordered_set<int>& fds, int fd) {
         return fds.find(fd) != fds.end();
     }
@@ -219,10 +209,19 @@ namespace cwrapper {
         return fds->find(regs[REG_RDI]) != fds->end();
     };
 
+    static int err_count(const ErrorDistribution& errs) {
+        int count = 0;
+        for (const auto& [e, c] : errs) {
+            if (e == EAGAIN || e == EWOULDBLOCK) continue;
+            count += c;
+        }
+        return count;
+    };
+
     TEST(CWrapper, TestInjectsFailures) {
         Pipe<int> rw_broken_pipe, r_broken_pipe, w_broken_pipe, healthy_pipe;
 
-        std::barrier b1(3), rw(2);
+        std::barrier b1(3), rw(2), r(2), w(2);
 
         sysfail_tid_t old_failing_thd_tid;
 
@@ -232,19 +231,27 @@ namespace cwrapper {
 
         std::atomic<bool> w_done = false;
 
-        ReadResult thd_rr;
+        ReadResult rr;
+        WriteResult wr;
+
         std::thread old_failing_thd([&]() {
                 old_failing_thd_tid = syscall(SYS_gettid);
                 b1.arrive_and_wait(); // 1
                 rw.arrive_and_wait(); // 2
-                thd_rr = read_n(healthy_pipe, ops);
+                rr = read_n(healthy_pipe, ops);
                 rw.arrive_and_wait(); // 3
-                thd_rr = read_all(rw_broken_pipe, w_done);
+                rr = read_all(rw_broken_pipe, w_done);
                 rw.arrive_and_wait(); // 4
             });
 
         std::thread old_non_failing_thd([&]() {
                 b1.arrive_and_wait(); // 1
+                r.arrive_and_wait(); // 5
+                rr = read_n(r_broken_pipe, ops);
+                r.arrive_and_wait(); // 6
+                wr = write_n(r_broken_pipe, ops, ops * 3);
+                w_done = true;
+                r.arrive_and_wait(); // 7
             });
 
         b1.arrive_and_wait(); // 1
@@ -292,7 +299,7 @@ namespace cwrapper {
             &failing_thds,
             [](void* ctx, auto tid) {
                 auto ft = reinterpret_cast<decltype(failing_thds)*>(ctx);
-                // std::lock_guard<std::mutex> l(ft->m);
+                std::lock_guard<std::mutex> l(ft->m);
                 return ft->thds.find(tid) != ft->thds.end();
             });
 
@@ -303,31 +310,32 @@ namespace cwrapper {
         // allow sysfail to discove threads
         std::this_thread::sleep_for(thd_disc_poll_tm);
 
+        // case 1: verify invocation-selector prevents failure-injection on
+        // failure enabled threads
+
         rw.arrive_and_wait(); // 2
 
-        auto wr = write_n(healthy_pipe, ops, 0);
+        wr = write_n(healthy_pipe, ops, 0);
 
         rw.arrive_and_wait(); // 3
 
         // does not failure-inject healthy-pipe
         EXPECT_EQ(wr.successful_writes.size(), ops);
         EXPECT_TRUE(wr.errs.empty());
-        EXPECT_EQ(thd_rr.nos.size(), ops);
-        EXPECT_TRUE(thd_rr.errs.empty());
+        EXPECT_EQ(rr.nos.size(), ops);
+        EXPECT_TRUE(rr.errs.empty());
+        for (const auto v : rr.nos) {
+            EXPECT_IN_RANGE(v, 0, ops);
+        }
 
-        wr = write_n(rw_broken_pipe, ops, 0);
+        // case 2: verify that
+        // 1. failure enabled threads observe failures
+        // 2. bias configuration is respected
+
+        wr = write_n(rw_broken_pipe, ops, ops);
         w_done = true;
 
         rw.arrive_and_wait(); // 4
-
-        auto err_count = [](const ErrorDistribution& errs) {
-            int count = 0;
-            for (const auto& [e, c] : errs) {
-                if (e == EAGAIN || e == EWOULDBLOCK) continue;
-                count += c;
-            }
-            return count;
-        };
 
         // failure-injects both read and write ops on broken pipe
         EXPECT_IN_RANGE(wr.successful_writes.size(), ops * .3, ops * .7);
@@ -335,25 +343,92 @@ namespace cwrapper {
         EXPECT_EQ(wr.errs.size(), 3) << to_string(wr.errs);
         EXPECT_GT(wr.errs[EIO], wr.errs[EBADFD] + wr.errs[EBADF]);
         EXPECT_GT(wr.errs[EBADFD], wr.errs[EBADF]);
+        for (const auto v : rr.nos) {
+            EXPECT_IN_RANGE(v, ops, ops * 2);
+        }
 
         // It should be 0.75 * 0.75, but use higher tolerances to avoid flaky
         // tests. P(read | write) = (1 - P(write fails before)) * P(read)
         //                        = 0.75 * 0.75
         // so, we use 0.8 ≈ 0.9 * 0.9
-        EXPECT_IN_RANGE(thd_rr.nos.size(), wr.successful_writes.size(), ops * .8);
-        EXPECT_IN_RANGE(err_count(thd_rr.errs), ops * .1, ops * .6);
+        EXPECT_IN_RANGE(rr.nos.size(), wr.successful_writes.size(), ops * .8);
+        EXPECT_IN_RANGE(err_count(rr.errs), ops * .1, ops * .6);
+        // Have seen a flaky failure with err-count 665, may be adjust the
+        // assertion above if this fails too frequently ^^
+
         // EBUSY shows up sometimes (perhaps when pipe is full?)
-        EXPECT_IN_RANGE(thd_rr.errs.size(), 2, 3) << to_string(thd_rr.errs);
-        EXPECT_GT(thd_rr.errs[EIO], 0);
-        EXPECT_GT(thd_rr.errs[EACCES], 0);
+        EXPECT_IN_RANGE(rr.errs.size(), 2, 3) << to_string(rr.errs);
+        EXPECT_GT(rr.errs[EIO], 0);
+        EXPECT_GT(rr.errs[EACCES], 0);
         EXPECT_GT(
-            static_cast<double>(thd_rr.errs[EIO]) / thd_rr.errs[EACCES],
+            static_cast<double>(rr.errs[EIO]) / rr.errs[EACCES],
             0.6);
         EXPECT_GT(
-            static_cast<double>(thd_rr.errs[EACCES]) / thd_rr.errs[EIO],
+            static_cast<double>(rr.errs[EACCES]) / rr.errs[EIO],
             0.6);
 
         old_failing_thd.join();
+
+        r.arrive_and_wait(); // 5
+
+        // case 3: verify failure-disabled thread does not observe failures
+
+        wr = write_n(r_broken_pipe, ops, ops * 2);
+
+        w_done = false;
+        r.arrive_and_wait(); // 6
+
+        // does not failure-inject healthy-pipe
+        EXPECT_EQ(wr.successful_writes.size(), ops);
+        EXPECT_TRUE(wr.errs.empty());
+        EXPECT_EQ(rr.nos.size(), ops);
+        EXPECT_TRUE(rr.errs.empty());
+        for (const auto v : rr.nos) {
+            EXPECT_IN_RANGE(v, ops * 2, ops * 3);
+        }
+
+        // case 3a: verify the pipe used for 3 is indeed failure-injecting
+
+        rr = read_all(r_broken_pipe, w_done);
+
+        r.arrive_and_wait(); // 7
+        EXPECT_EQ(wr.successful_writes.size(), ops);
+        EXPECT_TRUE(wr.errs.empty());
+        EXPECT_LT(rr.nos.size(), ops);
+        EXPECT_GT(err_count(rr.errs), 0);
+        for (const auto v : rr.nos) {
+            EXPECT_IN_RANGE(v, ops * 3, ops * 4);
+        }
+
         old_non_failing_thd.join();
+
+        // case 4: verify thread is discovered
+
+        std::unique_lock<std::mutex> l(failing_thds.m);
+
+        std::thread new_failing_thd([&]() {
+                failing_thds.thds.insert(gettid());
+                l.unlock();
+
+                w.arrive_and_wait(); // 8
+
+                wr = write_n(w_broken_pipe, ops, ops * 4);
+                w_done = true;
+            });
+
+        std::this_thread::sleep_for(thd_disc_poll_tm);
+        w_done = false;
+        w.arrive_and_wait(); // 8
+
+        rr = read_all(w_broken_pipe, w_done);
+        EXPECT_LT(wr.successful_writes.size(), ops);
+        EXPECT_GT(err_count(wr.errs), 0);
+        EXPECT_EQ(err_count(rr.errs), 0);
+        EXPECT_IN_RANGE(rr.nos.size(), wr.successful_writes.size(), ops);
+        for (const auto v : rr.nos) {
+            EXPECT_IN_RANGE(v, ops * 4, ops * 5);
+        }
+
+        new_failing_thd.join();
     }
 }
