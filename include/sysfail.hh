@@ -35,6 +35,21 @@ namespace sysfail {
 
     using InvocationPredicate = const std::function<bool(const greg_t*)>;
 
+    namespace invp {
+        using A = long long int;
+        using Zero = std::function<bool(Syscall)>;
+        using One = std::function<bool(Syscall, A)>;
+        using Two = std::function<bool(Syscall, A, A)>;
+        using Three = std::function<bool(Syscall, A, A, A)>;
+        using Four = std::function<bool(Syscall, A, A, A, A)>;
+        using Five = std::function<bool(Syscall, A, A, A, A, A)>;
+        using Six = std::function<bool(Syscall, A, A, A, A, A, A)>;
+
+        using P = std::variant<Zero, One, Two, Three, Four, Five, Six>;
+
+        InvocationPredicate p(P p);
+    }
+
     struct Outcome {
         const Probability fail;
         const Probability delay;

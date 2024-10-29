@@ -14,6 +14,7 @@ add_executable(main
     thdmon_test.cc
     session_thdmon_test.cc
     cwrapper_test.cc
+    inv_pred_test.cc
 )
 
 # Include the top-level include directory for shared headers

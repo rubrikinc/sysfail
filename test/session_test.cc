@@ -20,7 +20,7 @@ using namespace std::chrono_literals;
 namespace sysfail {
     using namespace Cisq;
 
-    TEST(SysFail, LoadSessionWithoutFailureInjection) {
+    TEST(Session, LoadSessionWithoutFailureInjection) {
         TmpFile tFile;
         tFile.write("foo bar baz quux");
 
@@ -36,7 +36,7 @@ namespace sysfail {
         EXPECT_EQ(success, 10);
     }
 
-    TEST(SysFail, LoadSessionWithSysReadBlocked) {
+    TEST(Session, LoadSessionWithSysReadBlocked) {
         TmpFile tFile;
         tFile.write("foo bar baz quux");
 
@@ -57,7 +57,7 @@ namespace sysfail {
         EXPECT_EQ(success, 0);
     }
 
-    TEST(SysFail, SysOpenAndReadFailureInjection) {
+    TEST(Session, SysOpenAndReadFailureInjection) {
         TmpFile tFile;
         tFile.write("foo bar baz quux");
 
@@ -97,7 +97,7 @@ namespace sysfail {
         EXPECT_EQ(success, 100);
     }
 
-    TEST(SysFail, SysSlowReadFastWrite) {
+    TEST(Session, SysSlowReadFastWrite) {
         TmpFile tFile;
 
         sysfail::Plan p(
@@ -137,7 +137,7 @@ namespace sysfail {
         EXPECT_LT(static_cast<double>(read_tm.count())/write_tm.count(), 1);
     }
 
-    TEST(SysFail, SeveralThreadsTest) {
+    TEST(Session, SeveralThreadsTest) {
         TmpFile f;
         f.write("foo");
 
@@ -249,7 +249,7 @@ namespace sysfail {
         } while (us.count() > elapsed_time);
     }
 
-    TEST(SysFail, SysfailDisable) {
+    TEST(Session, SysfailDisable) {
         TmpFile f;
         f.write("foo");
 
@@ -296,7 +296,7 @@ namespace sysfail {
         t.join();
     }
 
-    TEST(SysFail, ErrorDistribution) {
+    TEST(Session, ErrorDistribution) {
         TmpFile f;
         f.write("foo");
 
@@ -337,7 +337,7 @@ namespace sysfail {
         EXPECT_EQ(1000, eio_count + einval_count + efault_count);
     }
 
-    TEST(SysFail, StopFailureInjectionOnOtherThreads) {
+    TEST(Session, StopFailureInjectionOnOtherThreads) {
         TmpFile f;
         f.write("foo");
 
@@ -398,7 +398,7 @@ namespace sysfail {
         };
     }
 
-    TEST(SysFail, AddThreadChecksThreadIdFilter) {
+    TEST(Session, AddThreadChecksThreadIdFilter) {
         TmpFile f;
         f.write("foo");
 
@@ -476,7 +476,7 @@ namespace sysfail {
         };
     }
 
-    TEST(SysFail, ThreadAddRemoveIdempotence) {
+    TEST(Session, ThreadAddRemoveIdempotence) {
         TmpFile f;
         f.write("foo");
 
@@ -590,7 +590,7 @@ namespace sysfail {
         };
     }
 
-    TEST(SysFail, FailsAfterTheSyscallWhenSoConfigured) {
+    TEST(Session, FailsAfterTheSyscallWhenSoConfigured) {
         TmpFile tFile;
 
         sysfail::Plan p(
@@ -707,7 +707,7 @@ namespace sysfail {
         };
     }
 
-    TEST(SysFail, DelaysAfterTheSyscallWhenSoConfigured) {
+    TEST(Session, DelaysAfterTheSyscallWhenSoConfigured) {
         auto [d, fail_msg] = mesure_delay_effects(1ms, {1, 1});
 
         auto higher_rd_tm = std::max(d.without.rd, d.without.rd);
@@ -717,7 +717,7 @@ namespace sysfail {
         EXPECT_GT(d.with.wr / d.without.wr, 150) << fail_msg;
     }
 
-    TEST(SysFail, DelaysBeforeTheSyscallWhenSoConfigured) {
+    TEST(Session, DelaysBeforeTheSyscallWhenSoConfigured) {
         // Because sleep before has higher number of things happening after
         // the sleep, the effect is less pronounced. This can be made more
         // pronounced by bumping up the sleep, but this is good balance between
@@ -747,16 +747,16 @@ namespace sysfail {
 
     #define ASSERT_VALUE(e, v) assertValue(e, v, __FILE__, __LINE__)
 
-    TEST(SysFail, DoesNotFailIneligibleSyscalls) {
+    TEST(Session, DoesNotFailIneligibleSyscalls) {
         Pipe<int> p1, p2;
 
         auto fail_p1rd = [&p1](const greg_t* regs) -> bool {
             return p1.rd_fd == regs[REG_RDI];
         };
 
-        auto fail_p1wr = [&p1](const greg_t* regs) -> bool {
-            return p1.wr_fd == regs[REG_RDI];
-        };
+        auto fail_p1wr = invp::p([&p1](auto wr, auto fd, auto buff, auto sz) {
+            return fd == p1.wr_fd;
+        });
 
         {
             EXPECT_TRUE(p1.write(10).has_value());

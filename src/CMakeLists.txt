@@ -12,6 +12,7 @@ add_library(sysfail SHARED
     signal.cc
     restore.S
     cwrapper.cc
+    inv_pred.cc
 )
 
 target_link_libraries(sysfail TBB::tbb)

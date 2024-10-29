@@ -22,7 +22,7 @@ using namespace std::chrono_literals;
 namespace sysfail {
     using namespace Cisq;
 
-    TEST(Lib_ThdMon, FailureInjectsAllEligibleThreads) {
+    TEST(SessionThdMon, FailureInjectsAllEligibleThreads) {
         TmpFile f;
         f.write("foo");
 
@@ -103,7 +103,7 @@ namespace sysfail {
         };
     }
 
-    TEST(Lib_ThdMon, DiscoversAndFailureInjectsAllThreads) {
+    TEST(SessionThdMon, DiscoversAndFailureInjectsAllThreads) {
         TmpFile f;
         f.write("foo");
 
@@ -184,7 +184,7 @@ namespace sysfail {
         for (auto& t : thds) t.join();
     }
 
-    TEST(Lib_ThdMon, DoesNotRunAnyThreadsInNoThreadConfig) {
+    TEST(SessionThdMon, DoesNotRunAnyThreadsInNoThreadConfig) {
         TmpFile f;
         f.write("foo");
 
@@ -298,11 +298,11 @@ namespace sysfail {
         }
     }
 
-    TEST(Lib_ThdMon, ManualPolledThreadDiscoveryWithNoPeriodicPolling) {
+    TEST(SessionThdMon, ManualPolledThreadDiscoveryWithNoPeriodicPolling) {
         test_manual_polling_based_thread_discovery(thread_discovery::None{});
     }
 
-    TEST(Lib_ThdMon, ManualPolledThreadDiscoveryWithSlowPeriodicPolling) {
+    TEST(SessionThdMon, ManualPolledThreadDiscoveryWithSlowPeriodicPolling) {
         test_manual_polling_based_thread_discovery(
             thread_discovery::ProcPoll{10min});
     }
