@@ -17,7 +17,6 @@
 #include <oneapi/tbb/parallel_for.h>
 
 #include "sysfail.hh"
-#include "sysfail.h"
 #include "map.hh"
 #include "syscall.hh"
 #include "log.hh"

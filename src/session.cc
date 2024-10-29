@@ -13,7 +13,6 @@
 
 #include "sysfail.hh"
 #include "session.hh"
-#include "sysfail.h"
 #include "map.hh"
 #include "syscall.hh"
 #include "log.hh"
