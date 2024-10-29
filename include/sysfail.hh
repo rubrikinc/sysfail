@@ -36,7 +36,7 @@ namespace sysfail {
     using InvocationPredicate = const std::function<bool(const greg_t*)>;
 
     namespace invp {
-        using A = long long int;
+        using A = greg_t;
         using Zero = std::function<bool(Syscall)>;
         using One = std::function<bool(Syscall, A)>;
         using Two = std::function<bool(Syscall, A, A)>;

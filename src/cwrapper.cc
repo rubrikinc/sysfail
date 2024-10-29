@@ -6,6 +6,26 @@ extern "C" {
 
 extern "C" {
     using namespace sysfail;
+
+    int sysfail_syscall(const greg_t* regs) {
+        return static_cast<int>(regs[REG_RAX]);
+    }
+
+    greg_t sysfail_syscall_arg(const greg_t* regs, int arg) {
+        switch (arg) {
+            case 0: return regs[REG_RDI];
+            case 1: return regs[REG_RSI];
+            case 2: return regs[REG_RDX];
+            case 3: return regs[REG_R10];
+            case 4: return regs[REG_R8];
+            case 5: return regs[REG_R9];
+            default:
+                std::cerr << "Invalid syscall argument index: " << arg
+                          << ", aborting." << std::endl;
+                std::abort();
+        }
+    }
+
     sysfail_session_t* sysfail_start(const sysfail_plan_t *c_plan) {
         if (!c_plan) return nullptr;
 

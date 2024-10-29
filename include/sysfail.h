@@ -19,6 +19,9 @@ struct {
 
 typedef void sysfail_userdata_t;
 
+int sysfail_syscall(const greg_t*);
+greg_t sysfail_syscall_arg(const greg_t*, int);
+
 typedef int(*sysfail_invocation_predicate_t)(sysfail_userdata_t*, const greg_t*);
 
 struct {

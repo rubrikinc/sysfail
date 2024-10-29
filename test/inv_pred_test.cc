@@ -2,6 +2,7 @@
 #include <sysfail.hh>
 #include <ucontext.h>
 #include <random>
+#include <cstring>
 
 using namespace testing;
 using namespace std::chrono_literals;
@@ -29,7 +30,7 @@ namespace sysfail {
 
 
         gregset_t regs;
-        z(regs);
+        std::memset(regs, 0, sizeof(regs));
         regs[REG_RDI] = e1;
         regs[REG_RSI] = e2;
         regs[REG_RDX] = e3;

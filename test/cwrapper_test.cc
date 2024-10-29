@@ -223,7 +223,7 @@ namespace cwrapper {
 
     static int fd_exists(void *ctx, const greg_t* regs) {
         auto fds = reinterpret_cast<std::unordered_set<int>*>(ctx);
-        return fds->find(regs[REG_RDI]) != fds->end();
+        return fds->find(sysfail_syscall_arg(regs, 0)) != fds->end();
     };
 
     static int err_count(const ErrorDistribution& errs) {
@@ -715,5 +715,41 @@ namespace cwrapper {
     TEST(CWrapper, TestNullPlan) {
         auto s = sysfail_start(nullptr);
         EXPECT_FALSE(s);
+    }
+
+    TEST(CWrapper, UnderstandsSyscallArgs) {
+        std::random_device rd;
+        thread_local std::mt19937 rnd_eng(rd());
+        std::uniform_int_distribution<greg_t> n(0, 100);
+
+        greg_t e_call = n(rnd_eng);
+        greg_t e1 = n(rnd_eng);
+        greg_t e2 = n(rnd_eng);
+        greg_t e3 = n(rnd_eng);
+        greg_t e4 = n(rnd_eng);
+        greg_t e5 = n(rnd_eng);
+        greg_t e6 = n(rnd_eng);
+
+
+        gregset_t regs;
+        memset(regs, 0, sizeof(regs));
+        regs[REG_RDI] = e1;
+        regs[REG_RSI] = e2;
+        regs[REG_RDX] = e3;
+        regs[REG_R10] = e4;
+        regs[REG_R8] = e5;
+        regs[REG_R9] = e6;
+        regs[REG_RAX] = e_call;
+
+        EXPECT_EQ(sysfail_syscall(regs), e_call);
+        EXPECT_EQ(sysfail_syscall_arg(regs, 0), e1);
+        EXPECT_EQ(sysfail_syscall_arg(regs, 1), e2);
+        EXPECT_EQ(sysfail_syscall_arg(regs, 2), e3);
+        EXPECT_EQ(sysfail_syscall_arg(regs, 3), e4);
+        EXPECT_EQ(sysfail_syscall_arg(regs, 4), e5);
+        EXPECT_EQ(sysfail_syscall_arg(regs, 5), e6);
+
+        EXPECT_DEATH(sysfail_syscall_arg(regs, -1), "Invalid syscall argument");
+        EXPECT_DEATH(sysfail_syscall_arg(regs, 6), "Invalid syscall argument");
     }
 }
