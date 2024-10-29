@@ -17,5 +17,13 @@ add_library(sysfail SHARED
 
 target_link_libraries(sysfail TBB::tbb)
 
+set(inc_dir ${CMAKE_SOURCE_DIR}/include)
+
 # Include the top-level include directory for headers
-target_include_directories(sysfail PUBLIC ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(sysfail PUBLIC ${inc_dir})
+
+install(TARGETS sysfail
+        LIBRARY DESTINATION lib)
+
+install(DIRECTORY ${inc_dir}/
+        DESTINATION include)

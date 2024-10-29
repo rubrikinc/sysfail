@@ -35,6 +35,8 @@ Patches are welcome!
 
 ## Install
 
+Sysfail needs g++, libtbb-dev and libgtest-dev.
+
 ```
 $ git clone https://github.com/rubrikinc/sysfail
 $ cd sysfail
@@ -44,6 +46,14 @@ $ cmake ..
 $ make
 $ make install
 ```
+
+OR
+
+```
+$ git clone https://github.com/rubrikinc/sysfail
+$ docker build -t sysfail:test .
+```
+(this creates a local ubuntu image with sysfail installed)
 
 ## Using the App
 
