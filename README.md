@@ -27,11 +27,14 @@ of degradation / errors etc.
 
 ## Limitations
 
-* At the moment Sysfail only supports Linux + x86_64 / amd64 platform
+* At the moment Sysfail only supports Linux + x86_64 / amd64 platform. Patches are welcome!
 * While ABI for use over FFI-bridge exists, it does not have idomatic wrappers for other languages yet
-* It makes use of syscall-user-dispatch (https://github.com/torvalds/linux/blob/master/Documentation/admin-guide/syscall-user-dispatch.rst), so requires Linux version 5.11 or higher.
-
-Patches are welcome!
+* It makes use of syscall-user-dispatch (aka SUD) (https://github.com/torvalds/linux/blob/master/Documentation/admin-guide/syscall-user-dispatch.rst), so requires Linux version 5.11 or higher.
+* `libc` sometimes quiesces all signal-handlers (which SUD uses) for brief
+  periods (eg. while creating new threads). Sysfail disables failure injection
+  in such cases to avoid breaking `libc`'s assumptions
+* Some syscalls such as `SYS_rt_sigprocmask` are never failure-injected because
+  this would break `libc` code-paths such as the one described above.
 
 ## Install
 
@@ -55,6 +58,21 @@ $ docker build -t sysfail:test .
 ```
 which creates a local ubuntu image with sysfail installed. Feel free to modify
 Dockerfile to your liking (eg. preferred base-image, install location etc).
+
+Once built, one can play with sysfail the container
+```
+$ docker run -it sysfail:test /bin/bash
+# make
+...
+```
+or build and test with it, like so
+```
+...
+# su - ubuntu
+$ g++ -o flaky_print flaky_print.cc -lsysfail
+```
+(`flaky_print.cc` should already be present)
+
 
 ## Using sysfail
 

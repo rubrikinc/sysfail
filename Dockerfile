@@ -7,7 +7,9 @@ WORKDIR /sysfail
 RUN rm -rf build
 RUN mkdir build
 WORKDIR /sysfail/build
-RUN cmake ..
-RUN make
+RUN cmake .. -DCMAKE_INSTALL_PREFIX=/usr
+RUN make -j4
 RUN make test
 RUN make install
+RUN cp ../examples/flaky_print.cc /home/ubuntu/flaky_print.cc
+RUN chown ubuntu:ubuntu /home/ubuntu/flaky_print.cc

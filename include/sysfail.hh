@@ -29,7 +29,7 @@ namespace sysfail {
          // [0, 1] 0 => before syscall, 1 => after syscall
         const double after_bias;
 
-        Probability(
+        Probability( // TODO: move to def file
             double p,
             double after_bias = 0
         ) : p(p), after_bias(after_bias) {
