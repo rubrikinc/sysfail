@@ -53,9 +53,10 @@ OR
 $ git clone https://github.com/rubrikinc/sysfail
 $ docker build -t sysfail:test .
 ```
-(this creates a local ubuntu image with sysfail installed)
+which creates a local ubuntu image with sysfail installed. Feel free to modify
+Dockerfile to your liking (eg. preferred base-image, install location etc).
 
-## Using the App
+## Using sysfail
 
 The headers `sysfail.hh` and `sysfail.h` contain fully documented API for C++
 and C respectively. Linker flag `-lsysfail` links with the library.
