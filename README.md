@@ -6,35 +6,39 @@ Automated testing is key to building high quality software. Most modern
 software depends on external services or processes such as databases, queues,
 caches etc in addition to other stateful components like filesystems and
 devices.
-System-calls are the common interface for userland applications use to talk to
+System-calls are the common interface that userland applications use to talk to
 other processes / services and to the operating-system itself which makes them
 a powerful abstraction for testing applications' failure-resilience and
 robustness.
 Sysfail helps declaratively expose application (system under test) to failures
 and delays and helps harden non-functional properties such as idempotency,
-checkpoint-recovery, retries / ability to make progress in the face
-of degradation / errors etc.
+checkpoint-recovery, retries / ability to make progress in the face of
+degradation / errors etc.
 
 ## Features
 
 * Inject failures and / or delay to any system-call of choice
-* Specify mix / weights for errors that are presented in response to failure
+* Specify mix-of / weights-for errors that are presented in response to failure
 * Fine grained control on threads that are failure-injected
-* Specify fraction of errors that are injected before or after the syscall
-* Modern C++23 interface for C++ based applications
+* Specify fraction of errors that are injected before and / or after the syscall
+* Modern C++23 interface
 * C API that also serves as foreign-function-interface (FFI) for other languages (eg. Golang)
-* Ability to failure-inject regardless of extent of control on the call-site (eg. 3rd-party libraries)
+* Ability to failure-inject regardless of extent of control on the actual call-site (eg. 3rd-party libraries)
 
 ## Limitations
 
-* At the moment Sysfail only supports Linux + x86_64 / amd64 platform. Patches are welcome!
-* While ABI for use over FFI-bridge exists, it does not have idomatic wrappers for other languages yet
-* It makes use of syscall-user-dispatch (aka SUD) (https://github.com/torvalds/linux/blob/master/Documentation/admin-guide/syscall-user-dispatch.rst), so requires Linux version 5.11 or higher.
+* At the moment Sysfail only supports Linux + x86_64 / amd64 platform. [^1]
+* While ABI for use over FFI-bridge exists, it does not yet have idomatic
+  wrappers for other languages. [^1]
+* It makes use of [syscall-user-dispatch (aka SUD)](https://github.com/torvalds/linux/blob/master/Documentation/admin-guide/syscall-user-dispatch.rst),
+  so requires Linux version 5.11 or higher.
 * `libc` sometimes quiesces all signal-handlers (which SUD uses) for brief
   periods (eg. while creating new threads). Sysfail disables failure injection
   in such cases to avoid breaking `libc`'s assumptions
 * Some syscalls such as `SYS_rt_sigprocmask` are never failure-injected because
   this would break `libc` code-paths such as the one described above.
+
+[^1]: Patches are most welcome!
 
 ## Install
 
@@ -59,7 +63,7 @@ $ docker build -t sysfail:test .
 which creates a local ubuntu image with sysfail installed. Feel free to modify
 Dockerfile to your liking (eg. preferred base-image, install location etc).
 
-Once built, one can play with sysfail the container
+Once built, `run` to play with sysfail in the container
 ```
 $ docker run -it sysfail:test /bin/bash
 # make
@@ -81,5 +85,5 @@ and C respectively. Linker flag `-lsysfail` links with the library.
 
 Test files `session_test.cc` and `cwrapper_test.cc` serve as working examples of
 usage in C++ and C. `ffi.go` uses FFI (foreign-function-interface) in a
-standalone-process form-factor, so can serve as an example for non C / C++
+standalone-process form-factor, so can serve as a working example for non C / C++
 projects.
