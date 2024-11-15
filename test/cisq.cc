@@ -20,7 +20,6 @@
 #include <stdexcept>
 #include <cassert>
 #include <cstring>
-#include <format>
 #include <exception>
 #include <functional>
 #include <sys/timex.h>
@@ -52,7 +51,10 @@ namespace {
 }
 
 std::string Cisq::err_msg(const char* msg, int op_errno) {
-    return std::format("{}, err: {}", msg, std::strerror(op_errno));
+    std::string msg_str(msg);
+    msg_str += ", ";
+    msg_str += std::strerror(op_errno);
+    return msg_str;
 }
 
 Cisq::TmpFile::TmpFile() : path(makeTempFile()) {}

@@ -20,7 +20,6 @@
 #include <unordered_set>
 #include <chrono>
 #include <thread>
-#include <format>
 
 #include "thdmon.hh"
 #include "helpers.hh"
@@ -36,10 +35,9 @@ sysfail::ThdMon::ThdMon(
     // TODO: replace this with netlink cn_proc based monitoring
 
     if (! fs::exists(tasks_dir)) {
-        throw std::runtime_error(
-            std::format(
-                "Couldn't find process' task-dir: {}",
-                tasks_dir.string()));
+        std::string msg("Couldn't find process' task-dir: ");
+        msg += tasks_dir.string();
+        throw std::runtime_error(msg);
     }
 
     std::visit(cases(
