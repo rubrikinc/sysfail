@@ -30,7 +30,8 @@ void sysfail::enable_handler(signal_t signal, sigaction_t hdlr) {
     sigemptyset(&mask);
 
     action.sa_sigaction = hdlr;
-    action.sa_flags = SA_SIGINFO | SA_NODEFER;
+    // SA_ONSTACK is required for CGO to work properly
+    action.sa_flags = SA_SIGINFO | SA_NODEFER | SA_ONSTACK;
     action.sa_mask = mask;
 
     if (sigaction(signal, &action, nullptr) != 0) {

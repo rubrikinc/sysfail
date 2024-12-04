@@ -1,3 +1,19 @@
+/*
+ * Copyright © 2024 Rubrik, Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package main
 
 import (
@@ -26,8 +42,11 @@ func mkSysfailSession(
 		},
 		MaxDelayUsec: 0,
 		Ctx:          nil,
-		Eligible:     nil,
-		NumErrors:    1,
+		Eligible: sysfail.Eligibility{
+			Eligible: nil,
+			Type:     sysfail.EligibleFuncNone,
+		},
+		NumErrors: 1,
 		ErrorWeights: []sysfail.ErrorWeight{
 			{
 				Nerror: int(errno),
@@ -42,9 +61,22 @@ func mkSysfailSession(
 	}
 
 	outcomeList := []*sysfail.SyscallOutcome{syscallOutcome}
-	plan := sysfail.NewPlan(sysfail.ThreadDiscoveryPoll, 1000, outcomeList)
-
-	return sysfail.StartSession(plan)
+	plan, err := sysfail.NewPlan(
+		sysfail.ThreadDiscoveryPoll,
+		1000,
+		outcomeList,
+		nil,
+		nil,
+	)
+	if err != nil {
+		return nil
+	}
+	session, err := sysfail.StartSession(plan)
+	if err != nil {
+		return nil
+	} else {
+		return session
+	}
 }
 
 func enableSysfailAndExit(status uintptr) syscall.Errno {
