@@ -14,6 +14,10 @@ void set_poll_itvl(sysfail_thread_discovery_t* disc, uint32_t value) {
 void stop_sysfail(sysfail_session_t* session) {
 	if (session) session->stop(session);
 }
+
+void set_error_weights(sysfail_outcome_t* outcome, sysfail_error_wt_t* weights) {
+	outcome->error_wts = weights;
+}
 */
 import "C"
 import (
@@ -36,7 +40,7 @@ func mk_sysfail_session(
 		return nil
 	}
 
-	sz := (C.sizeof_sysfail_syscall_outcome_t + C.sizeof_sysfail_error_wt_t)
+	sz := (C.sizeof_sysfail_syscall_outcome_t)
 	outcome := (*C.sysfail_syscall_outcome_t)(C.malloc(C.ulong(sz)))
 	defer C.free(unsafe.Pointer(outcome))
 
@@ -47,12 +51,11 @@ func mk_sysfail_session(
 	outcome.outcome.eligible = nil
 	outcome.outcome.num_errors = 1
 
-	errorWt := (*C.sysfail_error_wt_t)(
-		unsafe.Pointer(
-			uintptr(unsafe.Pointer(outcome)) +
-				C.sizeof_sysfail_syscall_outcome_t))
+	errorWt := (*C.sysfail_error_wt_t)(C.malloc(C.ulong(C.sizeof_sysfail_error_wt_t)))
 	errorWt.nerror = C.int(errno)
 	errorWt.weight = 1.0
+
+	C.set_error_weights(&outcome.outcome, errorWt)
 
 	/* fmt.Printf("Fail probability: %f\n", outcome.fail.p)
 	fmt.Printf("Number of errors: %d\n", outcome.num_errors)

@@ -235,6 +235,7 @@ namespace {
 void sysfail::ActiveSession::fail_maybe(ucontext_t *ctx) {
     auto regs = ctx->uc_mcontext.gregs;
     auto call = ctx->uc_mcontext.gregs[REG_RAX];
+    log("Inside fail_maybe\n");
 
     auto o = plan.outcomes.find(call);
     if (o == plan.outcomes.end() || !o->second.eligible(regs)) {
@@ -261,6 +262,8 @@ void sysfail::ActiveSession::fail_maybe(ucontext_t *ctx) {
     }
     Errno fail_with = 0;
     if (o->second.fail.p > 0) {
+        log("Fail p: %\n", o->second.fail.p);
+        log("RDI %d\n", regs[REG_RDI]);
         if (p_dist(rnd_eng) < o->second.fail.p) {
             auto err_p = p_dist(rnd_eng);
             auto e = o->second.error_by_cumulative_p.lower_bound(err_p);
@@ -268,14 +271,17 @@ void sysfail::ActiveSession::fail_maybe(ucontext_t *ctx) {
             if (o->second.fail.after_bias && (after_p < o->second.fail.after_bias)) {
                 fail_with = e->second;
             } else {
-                if (e != o->second.error_by_cumulative_p.end()) {
+                if (e != o->second.error_by_cumulative_p.end() && regs[REG_RDI] == 7) {
                     // kernel returns negative 0 - 4096 error codes in %rax
+                    log("ErrNo: %d\n", -e->second);
                     regs[REG_RAX] = -e->second;
                     return;
                 }
             }
         }
     }
+
+    log("ErrNo: %d\n", fail_with);
 
     continue_syscall(ctx);
 
@@ -355,7 +361,7 @@ static void sysfail::handle_sigsys(int sig, siginfo_t *info, void *ucontext) {
         auto s = session;
         auto syscall = ctx->uc_mcontext.gregs[REG_RAX];
 
-        // log("Handling syscall: %d\n", syscall);
+        log("Handling syscall: %d\n", syscall);
 
         // LIBC turns off all signals before thread spawn and teardown.
         // Keep sysfail disabled here because libc wants quiescent state in
