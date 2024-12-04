@@ -88,7 +88,7 @@ struct {
     // Eligibility predicate
     sysfail_invocation_predicate_t eligible;
 
-    // Number of errors to form the mix to be drwan from when the syscall fails
+    // Number of errors to form the mix to be drawn from when the syscall fails
     uint32_t num_errors;
     // Actual error codes and their weights
     sysfail_error_wt_t *error_wts;
