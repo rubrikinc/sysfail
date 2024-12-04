@@ -60,7 +60,7 @@ if (GO_BIN)
     add_custom_command(
         OUTPUT ${GoFFI_TestBin}
         COMMAND ${CMAKE_COMMAND} -E env CGO_LDFLAGS=-L${LibPath} ${GO_BIN} ARGS build -o ${GoFFI_TestBin} ${GoFFI_Src}
-        DEPENDS ${GoFFI_Src}
+        DEPENDS ${GoFFI_Src} sysfail
         COMMENT "Building ffi.go"
     )
 
