@@ -18,13 +18,14 @@ package sysfail_test
 
 import (
 	"fmt"
-	"github.com/rubrikinc/sysfail"
 	"io/ioutil"
 	"os"
 	"syscall"
 	"testing"
 	"time"
 	"unsafe"
+
+	"github.com/rubrikinc/sysfail"
 )
 
 func TestInjectsFailures(t *testing.T) {
@@ -72,11 +73,11 @@ func TestInjectsFailures(t *testing.T) {
 			}
 			return 0
 		}, unsafe.Pointer(&tmpFileFd))
-	_, err = sysfail.StartSession(plan)
+	session, err := sysfail.StartSession(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	//defer session.Stop()
+	defer session.Stop()
 	fmt.Println("Injecting failures")
 
 	// wait for the session to poll the threads.
@@ -89,4 +90,6 @@ func TestInjectsFailures(t *testing.T) {
 			t.Logf("Write failed: %v\n", err)
 		}
 	}
+
+	fmt.Println("Test complete!")
 }

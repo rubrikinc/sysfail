@@ -189,6 +189,7 @@ func StartSession(plan *Plan) (*Session, error) {
 		var prev *C.sysfail_syscall_outcome_t = nil
 		for i, outcome := range plan.SyscallOutcomes {
 			curr := (*C.sysfail_syscall_outcome_t)(unsafe.Pointer(uintptr(unsafe.Pointer(cOutcomes)) + uintptr(i)*unsafe.Sizeof(*cOutcomes)))
+			curr.next = nil
 			curr.syscall = C.int(outcome.Syscall)
 			curr.outcome.fail.p = C.double(outcome.Outcome.Fail.P)
 			curr.outcome.fail.after_bias = C.double(outcome.Outcome.Fail.AfterBias)
@@ -197,6 +198,7 @@ func StartSession(plan *Plan) (*Session, error) {
 			curr.outcome.max_delay_usec = C.uint(outcome.Outcome.MaxDelayUsec)
 			curr.outcome.ctx = outcome.Outcome.Ctx
 			// curr.outcome.eligible = // still need to convert the function pointer if used
+			curr.outcome.eligible = nil
 			if outcome.Outcome.Eligible != nil {
 				return nil, ErrNotSupported
 			}

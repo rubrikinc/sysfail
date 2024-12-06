@@ -159,6 +159,7 @@ static void disable() {
         std::cerr << "Failed to disable sysfail, err: " << errStr << "\n";
         throw std::runtime_error("Failed to disable sysfail: " + errStr);
     }
+    sysfail::log("Disabled sysfail on %d\n", gettid());
     // caller must erase the thd-state
 }
 
@@ -235,7 +236,7 @@ namespace {
 void sysfail::ActiveSession::fail_maybe(ucontext_t *ctx) {
     auto regs = ctx->uc_mcontext.gregs;
     auto call = ctx->uc_mcontext.gregs[REG_RAX];
-    log("Inside fail_maybe\n");
+    log("Inside fail_maybe: %d\n", call);
 
     auto o = plan.outcomes.find(call);
     if (o == plan.outcomes.end() || !o->second.eligible(regs)) {
