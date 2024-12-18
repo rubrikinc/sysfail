@@ -16,7 +16,6 @@
 
 #include <iostream>
 #include <sys/prctl.h>
-#include <sys/prctl.h>
 #include <ucontext.h>
 #include <cassert>
 #include <cstring>
