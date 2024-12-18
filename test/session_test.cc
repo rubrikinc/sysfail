@@ -153,35 +153,35 @@ namespace sysfail {
         EXPECT_LT(static_cast<double>(read_tm.count())/write_tm.count(), 1);
     }
 
-    TEST(Session, SeveralThreadsTest) {
+    struct Result {
+        pid_t thd_id;
+        int success;
+        bool reader;
+    };
+
+    struct Results {
+        std::vector<Result> result;
+        std::mutex mtx;
+
+        Results() = default;
+
+        Results(Results&& r) {
+            std::lock_guard<std::mutex> l(r.mtx);
+            result = std::move(r.result);
+        }
+    };
+
+    Results run_multi_thd_rw_test(
+        sysfail::Plan& p,
+        int thds,
+        int attempts,
+        std::chrono::milliseconds await_thread_disc = 0ms
+    ) {
         TmpFile f;
         f.write("foo");
 
-        auto test_thd = gettid();
-
-        sysfail::Plan p(
-            { {SYS_read, {0.33, 0, 0us, {{EIO, 1.0}}}},
-              {SYS_openat, {0.25, 0, 0us, {{EINVAL, 1.0}}}},
-              {SYS_write, {0.8, 0, 0us, {{EINVAL, 1.0}}}}},
-            [test_thd](pid_t tid) { return tid % 2 == 0 && tid != test_thd; },
-            thread_discovery::None{});
-
-        const auto thds = 10;
-        const auto attempts = 1000;
-
         std::random_device rd;
         thread_local std::mt19937 rnd_eng(rd());
-
-        struct Result {
-            pid_t thd_id;
-            int success;
-            bool reader;
-        };
-
-        struct Results {
-            std::vector<Result> result;
-            std::mutex mtx;
-        };
 
         Results r;
         {
@@ -193,7 +193,11 @@ namespace sysfail {
                 auto reader = rw_dist(rnd_eng);
                 auto disable_explicitly = rw_dist(rnd_eng);
                 threads.push_back(std::thread([&]() {
-                    s.add();
+                    if (await_thread_disc == 0ms) {
+                        s.add();
+                    } else {
+                        std::this_thread::sleep_for(await_thread_disc);
+                    }
                     int success = 0;
                     for (auto a = 0; a < attempts; a++) {
                         if (reader) {
@@ -230,6 +234,25 @@ namespace sysfail {
             }
         }
 
+        EXPECT_EQ(r.result.size(), thds);
+        return r;
+    }
+
+    TEST(Session, SeveralThreadsTest) {
+        auto test_thd = gettid();
+
+        sysfail::Plan p(
+            { {SYS_read, {0.33, 0, 0us, {{EIO, 1.0}}}},
+              {SYS_openat, {0.25, 0, 0us, {{EINVAL, 1.0}}}},
+              {SYS_write, {0.8, 0, 0us, {{EINVAL, 1.0}}}}},
+            [test_thd](pid_t tid) { return tid % 2 == 0 && tid != test_thd; },
+            thread_discovery::None{});
+
+        const auto thds = 10;
+        const auto attempts = 1000;
+
+        auto r = run_multi_thd_rw_test(p, thds, attempts);
+
         for (const auto& r : r.result) {
             if (r.thd_id % 2 == 0) {
                 if (r.reader) {
@@ -245,6 +268,23 @@ namespace sysfail {
             } else { // we didn't inject failures for odd threads
                 EXPECT_EQ(r.success, attempts);
             }
+        }
+    }
+
+    TEST(Session, DoesNotDiscoverThreadsWhenDiscoveryIsDisabled) {
+        sysfail::Plan p(
+            {
+                {SYS_read, {1.0, 0, 0us, {{EIO, 1}}}},
+                {SYS_write, {1.0, 0, 0us, {{EIO, 1}}}} },
+            [](pid_t tid) { return true; },
+            thread_discovery::None{});
+
+        auto attempts = 100;
+
+        auto r = run_multi_thd_rw_test(p, 10, attempts, 20ms);
+
+        for (const auto& r : r.result) {
+            EXPECT_EQ(r.success, attempts);
         }
     }
 
