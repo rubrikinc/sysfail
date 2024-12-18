@@ -91,7 +91,7 @@ struct {
     // Number of errors to form the mix to be drwan from when the syscall fails
     uint32_t num_errors;
     // Actual error codes and their weights
-    sysfail_error_wt_t error_wts[];
+    sysfail_error_wt_t *error_wts;
 } typedef sysfail_outcome_t;
 
 /**

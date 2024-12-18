@@ -56,12 +56,7 @@ namespace cwrapper {
         std::vector<sysfail_error_wt_t> error_wts,
         sysfail_syscall_outcome_t* next = nullptr
     ) {
-        size_t outcome_size = sizeof(
-            sysfail_syscall_outcome_t) +
-            error_wts.size() * sizeof(sysfail_error_wt_t);
-        auto buffer = new uint8_t[outcome_size];
-        sysfail_syscall_outcome_t* so =
-            reinterpret_cast<sysfail_syscall_outcome_t*>(buffer);
+        sysfail_syscall_outcome_t* so = new sysfail_syscall_outcome_t;
         *so = {
             .next = next,
             .syscall = syscall,
@@ -74,7 +69,10 @@ namespace cwrapper {
                 .num_errors = static_cast<uint32_t>(error_wts.size())
             }
         };
-        std::copy(error_wts.begin(), error_wts.end(), so->outcome.error_wts);
+        so->outcome.error_wts = (sysfail_error_wt_t*)malloc(error_wts.size() * sizeof(sysfail_error_wt_t));
+        for (size_t i = 0; i < error_wts.size(); i++) {
+            so->outcome.error_wts[i] = error_wts[i];
+        }
         return so;
     }
 
