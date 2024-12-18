@@ -16,9 +16,13 @@
 
 #include <mutex>
 #include <string>
+#include <memory>
+#include <atomic>
 #include <sys/syscall.h>
 #include <expected>
 #include <stdexcept>
+#include <signal.h>
+
 
 // C-isq is needed because libc wrappers often do a completely different thing
 // than expectd. Initial version of this library had tests that had larger
@@ -107,5 +111,15 @@ namespace Cisq {
     };
 
     std::expected<std::chrono::system_clock::time_point, Err> tm_adjtimex();
+
+    enum class SyscallOutcome {
+        None,
+        Success,
+        Failure
+    };
+
+    extern std::atomic<SyscallOutcome> testsig_outcome;
+
+    void handle_testsig(int sig, siginfo_t *info, void *ucontext);
 }
 

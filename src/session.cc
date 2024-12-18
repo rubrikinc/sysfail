@@ -371,6 +371,7 @@ static void sysfail::handle_sigsys(int sig, siginfo_t *info, void *ucontext) {
                 }
             }
         } else if (syscall == SYS_rt_sigreturn) {
+            log("well, oops!\n");
             // TODO handle sigreturn correctly, may be write a test for it?
         } else if (s && syscall != SYS_exit) {
             s->fail_maybe(ctx);

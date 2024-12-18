@@ -167,3 +167,18 @@ std::expected<
         s(t.time.tv_sec) +
         (t.status & STA_NANO ? ns(t.time.tv_usec) : us(t.time.tv_usec)));
 }
+
+namespace Cisq {
+    std::atomic<Cisq::SyscallOutcome> testsig_outcome = SyscallOutcome::None;
+}
+
+void Cisq::handle_testsig(int sig, siginfo_t *info, void *ucontext) {
+    sysfail::log("testsig!\n");
+    testsig_outcome = SyscallOutcome::None;
+    auto ret = tm_adjtimex();
+    if (!ret) {
+        testsig_outcome = SyscallOutcome::Failure;
+        return;
+    }
+    testsig_outcome = SyscallOutcome::Success;
+}

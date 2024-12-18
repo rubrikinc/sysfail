@@ -843,4 +843,25 @@ namespace sysfail {
             ASSERT_VALUE(p2.read(), 40);
         }
     }
+
+    TEST(Session, RtSigReturnBehavior) {
+        Cisq::testsig_outcome = SyscallOutcome::None;
+        enable_handler(SIGUSR1, Cisq::handle_testsig);
+        auto tid = gettid();
+        send_signal<void>(tid, SIGUSR1, nullptr);
+        ASSERT_EQ(SyscallOutcome::Success, Cisq::testsig_outcome);
+        Cisq::testsig_outcome = SyscallOutcome::None;
+        {
+            sysfail::Plan p(
+                { {SYS_adjtimex, {{1, 0}, 0, 0ms, {{EOPNOTSUPP, 1}}}} },
+                [](pid_t tid) { return true; },
+                thread_discovery::None{});
+            Session s(p);
+            send_signal<void>(tid, SIGUSR1, nullptr);
+            ASSERT_EQ(SyscallOutcome::Failure, Cisq::testsig_outcome);
+        }
+        Cisq::testsig_outcome = SyscallOutcome::None;
+        send_signal<void>(tid, SIGUSR1, nullptr);
+        ASSERT_EQ(SyscallOutcome::Success, Cisq::testsig_outcome);
+    }
 }
