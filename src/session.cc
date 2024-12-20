@@ -390,7 +390,15 @@ static void sysfail::handle_sigsys(int sig, siginfo_t *info, void *ucontext) {
                 }
             }
         } else if (syscall == SYS_rt_sigreturn) {
-            // TODO handle sigreturn correctly, may be write a test for it?
+             auto rax = set_rsp_and_exec_syscall(
+                     ctx->uc_mcontext.gregs[REG_RDI],
+                     ctx->uc_mcontext.gregs[REG_RSI],
+                     ctx->uc_mcontext.gregs[REG_RDX],
+                     ctx->uc_mcontext.gregs[REG_R10],
+                     ctx->uc_mcontext.gregs[REG_R8],
+                     ctx->uc_mcontext.gregs[REG_R9],
+                     ctx->uc_mcontext.gregs[REG_RAX],
+                     ctx->uc_mcontext.gregs[REG_RSP]);
         } else if (s && syscall != SYS_exit) {
             s->fail_maybe(ctx);
         } else {
