@@ -17,17 +17,23 @@
 #include <sys/syscall.h>
 #include <cstring>
 #include <unistd.h>
+#include <cstdarg>
+#include <cstdio>  
 
 #include "log.hh"
 #include "syscall.hh"
 
-void sysfail::log(const char* msg) {
-    syscall(STDERR_FILENO, (long)(msg), strlen(msg), 0, 0, 0, SYS_write);
-}
 
-void sysfail::log(const char* msg, long arg1) {
-    const int len = 256;
-    char buffer[256];
-    int n = snprintf(buffer, sizeof(buffer), msg, arg1);
+void sysfail::log(const char* msg, ...) {
+    const int len = 512;
+    char buffer[len];
+    va_list args;
+    va_start(args, msg);
+    int n = vsnprintf(buffer, sizeof(buffer), msg, args);
+    va_end(args);
+    // Ensure the write length does not exceed the buffer size
+    if (n > len) {
+        n = len;
+    }
     syscall(STDERR_FILENO, (long)(buffer), n, 0, 0, 0, SYS_write);
 }

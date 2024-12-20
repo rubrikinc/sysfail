@@ -80,10 +80,30 @@ sysfail::ActivePlan::ActivePlan(const Plan& p) : p(p) {
     }
 }
 
+void unmask_sigsys(int signum) {
+    struct sigaction sa;
+    // Retrieve current signal action
+    if (sigaction(signum, NULL, &sa) != 0) {
+        sysfail::log("Failed to get signal handler for signal %d: %s\n", signum, strerror(errno));
+        return;
+    }
+    // Modify signal mask to unblock SIGSYS
+    sigdelset(&sa.sa_mask, SIGSYS);
+    // Update signal action with modified mask
+    if (sigaction(signum, &sa, NULL) != 0) {
+        sysfail::log("Failed to set signal handler for signal %d: %s\n", signum, strerror(errno));
+        return;
+    }
+}
+
+
 sysfail::ActiveSession::ActiveSession(
     const Plan& _plan,
     AddrRange&& _self_addr
 ) : plan(_plan), self_text(_self_addr) {
+    for(int i=0;i<NSIG;i++) {
+        unmask_sigsys(i);
+    }
     enable_handler(SIGSYS, handle_sigsys);
     enable_handler(SIG_REARM, reenable_sysfail);
     enable_handler(SIG_ENABLE, enable_sysfail);
