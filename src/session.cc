@@ -100,7 +100,7 @@ sysfail::ActiveSession::ActiveSession(
     AddrRange&& _self_addr
 ) : plan(_plan), self_text(_self_addr) {
     for(int i=1;i<NSIG;i++) {
-        if(i == SIGKILL or i == SIGSTOP or i == SIGRTMIN or i == SIGRTMAX) continue;
+        if(i == SIGKILL or i == SIGSTOP) continue;
         unmask_sigsys(i);
     }
     enable_handler(SIGSYS, handle_sigsys);

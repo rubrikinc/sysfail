@@ -22,16 +22,21 @@ package sysfail
 
 #include "sysfail.h"
 #include <stdlib.h>
+#include <sys/stat.h>
 
 #ifndef SYSFAIL_GO_H
 #define SYSFAIL_GO_H
 
 int Selector(void* ctx, sysfail_tid_t tid);
 
-static int FdNotStdInOutErr(void* ctx, const greg_t* regs) {
+static int RegularFileOtherThanStdInOutErr(void* ctx, const greg_t* regs) {
 	// This function assumes that the first argument to the syscall is the file descriptor
 	int fd = sysfail_syscall_arg(regs, 0);
-	if(fd > 2) {
+	struct stat st;
+	if (fstat(fd, &st) != 0) {
+		return 0;  // Could not determine, hence treat as not a regular file
+	}
+	if(S_ISREG(st.st_mode) && fd > 2) {
 		return 1;
 	}
 	return 0;
@@ -82,7 +87,7 @@ static void set_ctx(sysfail_outcome_t* outcome, void* ctx) {
 }
 
 static void set_eligible_func_not_stdin_out_err(sysfail_outcome_t* outcome) {
-	if(outcome) outcome->eligible = FdNotStdInOutErr;
+	if(outcome) outcome->eligible = RegularFileOtherThanStdInOutErr;
 }
 
 #endif
