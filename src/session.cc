@@ -80,10 +80,29 @@ sysfail::ActivePlan::ActivePlan(const Plan& p) : p(p) {
     }
 }
 
+void unmask_sigsys(int signum) {
+    struct sigaction sa;
+    // Retrieve current signal action
+    if (sigaction(signum, NULL, &sa) != 0) {
+        sysfail::log("Failed to get signal handler for signal %d: %s\n", signum, strerror(errno));
+    }
+    // Modify signal mask to unblock SIGSYS
+    sigdelset(&sa.sa_mask, SIGSYS);
+    // Update signal action with modified mask
+    if (sigaction(signum, &sa, NULL) != 0) {
+        sysfail::log("Failed to unmask SIGSYS for signal %d: %s\n", signum, strerror(errno));
+    }
+}
+
+
 sysfail::ActiveSession::ActiveSession(
     const Plan& _plan,
     AddrRange&& _self_addr
 ) : plan(_plan), self_text(_self_addr) {
+    for(int i=1;i<NSIG;i++) {
+        if(i == SIGKILL or i == SIGSTOP) continue;
+        unmask_sigsys(i);
+    }
     enable_handler(SIGSYS, handle_sigsys);
     enable_handler(SIG_REARM, reenable_sysfail);
     enable_handler(SIG_ENABLE, enable_sysfail);
@@ -371,7 +390,15 @@ static void sysfail::handle_sigsys(int sig, siginfo_t *info, void *ucontext) {
                 }
             }
         } else if (syscall == SYS_rt_sigreturn) {
-            // TODO handle sigreturn correctly, may be write a test for it?
+             auto rax = set_rsp_and_exec_syscall(
+                     ctx->uc_mcontext.gregs[REG_RDI],
+                     ctx->uc_mcontext.gregs[REG_RSI],
+                     ctx->uc_mcontext.gregs[REG_RDX],
+                     ctx->uc_mcontext.gregs[REG_R10],
+                     ctx->uc_mcontext.gregs[REG_R8],
+                     ctx->uc_mcontext.gregs[REG_R9],
+                     ctx->uc_mcontext.gregs[REG_RAX],
+                     ctx->uc_mcontext.gregs[REG_RSP]);
         } else if (s && syscall != SYS_exit) {
             s->fail_maybe(ctx);
         } else {
