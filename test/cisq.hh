@@ -17,8 +17,9 @@
 #include <mutex>
 #include <string>
 #include <sys/syscall.h>
-#include <expected>
 #include <stdexcept>
+#include <variant>
+#include <optional>
 
 // C-isq is needed because libc wrappers often do a completely different thing
 // than expectd. Initial version of this library had tests that had larger
@@ -50,9 +51,9 @@ namespace Cisq {
 
         ~TmpFile();
 
-        std::expected<std::string, Err> read();
+        std::variant<std::string, Err> read();
 
-        std::expected<void, Err> write(const std::string& content);
+        std::optional<Err> write(const std::string& content);
     };
 
     template <typename T> struct Pipe {
@@ -77,20 +78,20 @@ namespace Cisq {
             syscall(SYS_close, wr_fd);
         }
 
-        std::expected<T, Err> read() {
+        std::variant<T, Err> read() {
             T t;
             auto bytes = syscall(SYS_read, rd_fd, &t, sizeof(t));
             if (bytes < 0) {
-                return std::unexpected(Err("Failed to read pipe", errno));
+                return Err("Failed to read pipe", errno);
             }
             return t;
         }
 
-        std::expected<int, Err> write(const T& t) {
+        std::variant<int, Err> write(const T& t) {
             auto bytes = syscall(SYS_write, wr_fd, &t, sizeof(t));
 
             if (bytes < 0) {
-                return std::unexpected(Err("Failed to write file", errno));
+                return Err("Failed to write file", errno);
             }
 
             return static_cast<int>(bytes);
@@ -106,6 +107,6 @@ namespace Cisq {
         ~AsyncRead();
     };
 
-    std::expected<std::chrono::system_clock::time_point, Err> tm_adjtimex();
+    std::variant<std::chrono::system_clock::time_point, Err> tm_adjtimex();
 }
 

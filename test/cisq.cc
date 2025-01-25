@@ -16,8 +16,9 @@
 
 #include <fcntl.h>
 #include <unistd.h>
-#include <expected>
+#include <variant>
 #include <stdexcept>
+#include <optional>
 #include <cassert>
 #include <cstring>
 #include <exception>
@@ -38,15 +39,15 @@ namespace {
         return path;
     }
 
-    std::expected<int, Cisq::Err> open_file(
+    std::variant<int, Cisq::Err> open_file(
         const std::string& path,
         int flags
     ) {
         auto fd = syscall(SYS_openat, AT_FDCWD, path.c_str(), flags);
         if (fd < 0) {
-            return std::unexpected(Cisq::Err("Failed to open file", errno));
+            return Cisq::Err("Failed to open file", errno);
         }
-        return fd;
+        return int(fd);
     }
 }
 
@@ -63,37 +64,37 @@ Cisq::TmpFile::~TmpFile() {
     unlink(path.c_str());
 }
 
-std::expected<std::string, Cisq::Err> Cisq::TmpFile::read() {
+std::variant<std::string, Cisq::Err> Cisq::TmpFile::read() {
     std::lock_guard<std::mutex> lock(m);
     auto fd = open_file(path, O_RDONLY);
-    if (!fd.has_value()) {
-        return std::unexpected(fd.error());
+    if (std::holds_alternative<Cisq::Err>(fd)) {
+        return std::get<1>(fd);
     }
     std::string content;
     char buffer[1024];
-    auto bytes = syscall(SYS_read, fd.value(), buffer, sizeof(buffer));
+    auto bytes = syscall(SYS_read, std::get<0>(fd), buffer, sizeof(buffer));
     auto read_err = errno;
-    syscall(SYS_close, fd.value());
+    syscall(SYS_close, std::get<0>(fd));
     if (bytes < 0) {
-        return std::unexpected(Cisq::Err("Failed to read file", read_err));
+        return Cisq::Err("Failed to read file", read_err);
     }
     content.append(buffer, bytes);
     return content;
 }
 
-std::expected<void, Cisq::Err> Cisq::TmpFile::write(
+std::optional<Cisq::Err> Cisq::TmpFile::write(
     const std::string& content
 ) {
     std::lock_guard<std::mutex> lock(m);
     auto fd = open_file(path, O_WRONLY | O_TRUNC);
-    if (!fd.has_value()) {
-        return std::unexpected(fd.error());
+    if (std::holds_alternative<Cisq::Err>(fd)) {
+        return std::get<1>(fd);
     }
-    auto bytes = syscall(SYS_write, fd.value(), content.c_str(), content.size());
+    auto bytes = syscall(SYS_write, std::get<0>(fd), content.c_str(), content.size());
     auto write_err = errno;
-    syscall(SYS_close, fd.value());
+    syscall(SYS_close, std::get<0>(fd));
     if (bytes < 0) {
-        return std::unexpected(Err("Failed to write file", errno));
+        return Err("Failed to write file", errno);
     }
     return {};
 }
@@ -113,19 +114,19 @@ int Cisq::Err::err() const {
     return op_errno;
 }
 
-static std::expected<void, Cisq::Err> change_flag(
+static std::optional<Cisq::Err> change_flag(
     int fd,
     std::function<int(int)> f
 ) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags == -1) {
-        return std::unexpected(Cisq::Err("fcntl F_GETFL", errno));
+        return Cisq::Err("fcntl F_GETFL", errno);
     }
 
     flags = f(flags);
 
     if (fcntl(fd, F_SETFL, flags) == -1) {
-        return std::unexpected(Cisq::Err("fcntl F_SETFL", errno));
+        return Cisq::Err("fcntl F_SETFL", errno);
     }
 
     return {};
@@ -133,20 +134,20 @@ static std::expected<void, Cisq::Err> change_flag(
 
 Cisq::AsyncRead::AsyncRead(const int fd): fd(fd) {
     auto ret = change_flag(fd, [](int flags) { return flags | O_NONBLOCK; });
-    if (!ret) {
-        throw ret.error();
+    if (ret.has_value()) {
+        throw ret.value();
     }
 }
 
 Cisq::AsyncRead::~AsyncRead() {
     auto ret = change_flag(fd, [](int flags) { return flags & ~O_NONBLOCK; });
-    if (!ret) {
-        sysfail::log(ret.error().what());
+    if (ret.has_value()) {
+        sysfail::log(ret.value().what());
         std::terminate();
     }
 }
 
-std::expected<
+std::variant<
     std::chrono::system_clock::time_point,
     Cisq::Err
 > Cisq::tm_adjtimex() {
@@ -156,7 +157,7 @@ std::expected<
 
     auto ret = syscall(SYS_adjtimex, &t);
     if (ret == -1) {
-        return std::unexpected(Cisq::Err("adjtimex failed", errno));
+        return Cisq::Err("adjtimex failed", errno);
     }
 
     using ns = std::chrono::nanoseconds;

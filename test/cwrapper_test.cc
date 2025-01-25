@@ -16,7 +16,6 @@
 
 #include <gtest/gtest.h>
 #include <sysfail.hh>
-#include <expected>
 #include <chrono>
 #include <random>
 #include <unistd.h>
@@ -29,6 +28,8 @@
 #include <functional>
 #include <unordered_set>
 #include <oneapi/tbb/concurrent_vector.h>
+#include <variant>
+#include <optional>
 
 #include "cisq.hh"
 
@@ -194,14 +195,14 @@ namespace cwrapper {
         int i = 0;
         while (true) {
             auto ret = p.read();
-            if (ret.has_value()) {
-                rr.nos.push_back(ret.value());
+            if (!std::holds_alternative<Cisq::Err>(ret)) {
+                rr.nos.push_back(std::get<0>(ret));
             } else {
-                auto e = ret.error();
+                auto e = std::get<1>(ret);
                 if ((e.err() == EAGAIN || e.err() == EWOULDBLOCK) && w_done) {
                     break;
                 } else {
-                    rr.errs[ret.error().err()]++;
+                    rr.errs[e.err()]++;
                 }
             }
         }
@@ -212,10 +213,10 @@ namespace cwrapper {
         ReadResult rr;
         for (int i = 0; i < count; i++) {
             auto ret = p.read();
-            if (ret.has_value()) {
-                rr.nos.push_back(ret.value());
+            if (!std::holds_alternative<Cisq::Err>(ret)) {
+                rr.nos.push_back(std::get<0>(ret));
             } else {
-                rr.errs[ret.error().err()]++;
+                rr.errs[std::get<1>(ret).err()]++;
             }
         }
         return rr;
@@ -226,10 +227,10 @@ namespace cwrapper {
         int j = 0;
         for (int i = start; i < (start + count); i++) {
             auto ret = p.write(i);
-            if (ret.has_value()) {
+            if (!std::holds_alternative<Cisq::Err>(ret)) {
                 wr.successful_writes.insert(i);
             } else {
-                wr.errs[ret.error().err()]++;
+                wr.errs[std::get<1>(ret).err()]++;
             }
         }
         return wr;
@@ -698,10 +699,10 @@ namespace cwrapper {
             auto tm_res = Cisq::tm_adjtimex();
             auto end_tm = std::chrono::system_clock::now();
 
-            ASSERT_TRUE(tm_res.has_value())
+            ASSERT_FALSE(std::holds_alternative<Cisq::Err>(tm_res))
                 << "adjtimex failed "
-                << tm_res.error().what();
-            auto sys_time = tm_res.value();
+                << std::get<1>(tm_res).what();
+            auto sys_time = std::get<0>(tm_res);
 
             delay_before.push_back(sys_time - start_tm);
             delay_after.push_back(end_tm - sys_time);
