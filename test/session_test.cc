@@ -16,13 +16,15 @@
 
 #include <gtest/gtest.h>
 #include <sysfail.hh>
-#include <expected>
 #include <chrono>
 #include <random>
 #include <unistd.h>
 #include <fcntl.h>
 #include <cstring>
 #include <barrier>
+#include <variant>
+#include <optional>
+#include <ratio>
 #include <oneapi/tbb/concurrent_vector.h>
 
 #include "cisq.hh"
@@ -44,9 +46,9 @@ namespace sysfail {
         auto success = 0;
         for (int i = 0; i < 10; i++) {
             auto r = tFile.read();
-            if (r.has_value()) {
+            if (!std::holds_alternative<Cisq::Err>(r)) {
                 success++;
-                EXPECT_EQ(r.value(), "foo bar baz quux");
+                EXPECT_EQ(std::get<0>(r), "foo bar baz quux");
             }
         }
         EXPECT_EQ(success, 10);
@@ -65,9 +67,9 @@ namespace sysfail {
         auto success = 0;
         for (int i = 0; i < 10; i++) {
             auto r = tFile.read();
-            if (r.has_value()) {
+            if (!std::holds_alternative<Cisq::Err>(r)) {
                 success++;
-                EXPECT_EQ(r.value(), "foo bar baz quux");
+                EXPECT_EQ(std::get<0>(r), "foo bar baz quux");
             }
         }
         EXPECT_EQ(success, 0);
@@ -88,7 +90,7 @@ namespace sysfail {
             auto success = 0;
             for (int i = 0; i < 1000; i++) {
                 auto r = tFile.read();
-                if (r.has_value()) {
+                if (!std::holds_alternative<Cisq::Err>(r)) {
                     success++;
                 }
             }
@@ -106,7 +108,7 @@ namespace sysfail {
         auto success = 0;
         for (int i = 0; i < 100; i++) {
             auto r = tFile.read();
-            if (r.has_value()) {
+            if (!std::holds_alternative<Cisq::Err>(r)) {
                 success++;
             }
         }
@@ -133,7 +135,7 @@ namespace sysfail {
                 auto read_start = std::chrono::system_clock::now();
                 auto r = tFile.read();
                 read_tm += std::chrono::system_clock::now() - read_start;
-                EXPECT_EQ(r.value(), str);
+                EXPECT_EQ(std::get<0>(r), str);
             }
             EXPECT_GT(static_cast<double>(read_tm.count())/write_tm.count(), 2);
         }
@@ -147,7 +149,7 @@ namespace sysfail {
             auto read_start = std::chrono::system_clock::now();
             auto r = tFile.read();
             read_tm += std::chrono::system_clock::now() - read_start;
-            EXPECT_EQ(r.value(), str);
+            EXPECT_EQ(std::get<0>(r), str);
         }
 
         EXPECT_LT(static_cast<double>(read_tm.count())/write_tm.count(), 1);
@@ -202,19 +204,20 @@ namespace sysfail {
                     for (auto a = 0; a < attempts; a++) {
                         if (reader) {
                             auto r = f.read();
-                            if (r.has_value()) {
+                            if (!std::holds_alternative<Cisq::Err>(r)) {
+                                auto val = std::get<0>(r);
                                 EXPECT_TRUE(
-                                    r.value() == "foo" ||
-                                    r.value().empty() ||
-                                    r.value().starts_with("bar-"))
-                                    << "value: " << r.value();
+                                    val == "foo" ||
+                                    val.empty() ||
+                                    val.starts_with("bar-"))
+                                    << "value: " << val;
                                 success++;
                             }
                         } else {
                             auto w = f.write(
                                     std::string("bar-") +
                                     std::to_string(w_ctr.fetch_add(1)));
-                            if (w.has_value()) {
+                            if (!w.has_value()) {
                                 success++;
                             }
                         }
@@ -323,13 +326,13 @@ namespace sysfail {
             start_sem.release();
             s.add();
             auto r = f.read();
-            EXPECT_FALSE(r.has_value());
+            EXPECT_TRUE(std::holds_alternative<Cisq::Err>(r));
 
             // the main thread only turned off sysfail for itself, not for
             // other threads
             chk_sem.acquire();
             r = f.read();
-            EXPECT_FALSE(r.has_value());
+            EXPECT_TRUE(std::holds_alternative<Cisq::Err>(r));
 
             chk_sem.release();
         });
@@ -338,17 +341,17 @@ namespace sysfail {
 
         start_sem.acquire();
         auto r = f.read();
-        EXPECT_FALSE(r.has_value());
+        EXPECT_TRUE(std::holds_alternative<Cisq::Err>(r));
         s.remove();
 
         chk_sem.release();
         r = f.read();
-        EXPECT_TRUE(r.has_value());
+        EXPECT_FALSE(std::holds_alternative<Cisq::Err>(r));
         chk_sem.acquire();
 
         s.add();
         r = f.read();
-        EXPECT_FALSE(r.has_value());
+        EXPECT_TRUE(std::holds_alternative<Cisq::Err>(r));
         t.join();
     }
 
@@ -370,8 +373,8 @@ namespace sysfail {
             Session s(p);
             for (int i = 0; i < 1000; i++) {
                 auto ret = f.read();
-                EXPECT_FALSE(ret.has_value());
-                auto err_no = ret.error().err();
+                EXPECT_TRUE(std::holds_alternative<Cisq::Err>(ret));
+                auto err_no = std::get<1>(ret).err();
                 auto e = error_count.find(err_no);
                 if (e == error_count.end()) {
                     error_count.emplace(err_no, 1);
@@ -408,7 +411,7 @@ namespace sysfail {
             Session s(p);
 
             auto ret = f.read();
-            EXPECT_FALSE(ret.has_value());
+            EXPECT_TRUE(std::holds_alternative<Cisq::Err>(ret));
 
             std::barrier b(2);
 
@@ -420,22 +423,22 @@ namespace sysfail {
                 thd_tid = gettid();
 
                 auto ret = f.read();
-                EXPECT_TRUE(ret.has_value());
-                EXPECT_EQ(ret.value(), "foo");
+                EXPECT_FALSE(std::holds_alternative<Cisq::Err>(ret));
+                EXPECT_EQ(std::get<0>(ret), "foo");
 
                 b.arrive_and_wait(); // 1
                 b.arrive_and_wait(); // 2
 
                 ret = f.read();
-                EXPECT_FALSE(ret.has_value());
+                EXPECT_TRUE(std::holds_alternative<Cisq::Err>(ret));
 
                 s.remove(main_tid);
                 b.arrive_and_wait(); // 3
                 b.arrive_and_wait(); // 4
 
                 ret = f.read();
-                EXPECT_TRUE(ret.has_value());
-                EXPECT_EQ(ret.value(), "foo");
+                EXPECT_FALSE(std::holds_alternative<Cisq::Err>(ret));
+                EXPECT_EQ(std::get<0>(ret), "foo");
             });
 
             b.arrive_and_wait(); // 1
@@ -444,8 +447,8 @@ namespace sysfail {
 
             b.arrive_and_wait(); // 3
             ret = f.read();
-            EXPECT_TRUE(ret.has_value());
-            EXPECT_EQ(ret.value(), "foo");
+            EXPECT_FALSE(std::holds_alternative<Cisq::Err>(ret));
+            EXPECT_EQ(std::get<0>(ret), "foo");
 
             s.remove(thd_tid);
             b.arrive_and_wait(); // 4
@@ -489,10 +492,10 @@ namespace sysfail {
                     b.arrive_and_wait(); // 2
                     auto ret = f.read();
                     if (tid % 2 == 0) {
-                        EXPECT_FALSE(ret.has_value());
+                        EXPECT_TRUE(std::holds_alternative<Cisq::Err>(ret));
                     } else {
-                        EXPECT_TRUE(ret.has_value());
-                        EXPECT_EQ(ret.value(), "foo");
+                        EXPECT_FALSE(std::holds_alternative<Cisq::Err>(ret));
+                        EXPECT_EQ(std::get<0>(ret), "foo");
                     }
 
                     b.arrive_and_wait(); // 3
@@ -505,8 +508,8 @@ namespace sysfail {
                     b.arrive_and_wait(); // 4
 
                     ret = f.read();
-                    EXPECT_TRUE(ret.has_value());
-                    EXPECT_EQ(ret.value(), "foo");
+                    EXPECT_FALSE(std::holds_alternative<Cisq::Err>(ret));
+                    EXPECT_EQ(std::get<0>(ret), "foo");
                 });
             }
 
@@ -582,10 +585,10 @@ namespace sysfail {
                     b.arrive_and_wait(); // 2
                     auto ret = f.read();
                     if (tid % 2 == 0) {
-                        EXPECT_FALSE(ret.has_value());
+                        EXPECT_TRUE(std::holds_alternative<Cisq::Err>(ret));
                     } else {
-                        EXPECT_TRUE(ret.has_value());
-                        EXPECT_EQ(ret.value(), "foo");
+                        EXPECT_FALSE(std::holds_alternative<Cisq::Err>(ret));
+                        EXPECT_EQ(std::get<0>(ret), "foo");
                     }
 
                     b.arrive_and_wait(); // 3
@@ -605,8 +608,8 @@ namespace sysfail {
                     b.arrive_and_wait(); // 4
 
                     ret = f.read();
-                    EXPECT_TRUE(ret.has_value());
-                    EXPECT_EQ(ret.value(), "foo");
+                    EXPECT_FALSE(std::holds_alternative<Cisq::Err>(ret));
+                    EXPECT_EQ(std::get<0>(ret), "foo");
                 });
             }
 
@@ -660,14 +663,14 @@ namespace sysfail {
             // NOTE: this test does not report failure because writes fail
             // use debugger to see the failure
             auto rd_result = tFile.read();
-            EXPECT_EQ(rd_result.value(), "foo");
+            EXPECT_EQ(std::get<0>(rd_result), "foo");
             Session s(p);
             auto wr_result = tFile.write("bar");
-            EXPECT_FALSE(wr_result.has_value());
+            EXPECT_TRUE(wr_result.has_value());
             rd_result = tFile.read();
-            EXPECT_TRUE(rd_result.has_value());
+            EXPECT_FALSE(std::holds_alternative<Cisq::Err>(rd_result));
             // log(rd_result.value().c_str());  // <- this can help debug
-            EXPECT_EQ(rd_result.value(), "bar");
+            EXPECT_EQ(std::get<0>(rd_result), "bar");
         }
     }
 
@@ -721,8 +724,8 @@ namespace sysfail {
             std::thread reader([&]() {
                 for (int i = 0; i < evt_count; i++) {
                     auto polled = pipe.read();
-                    if (polled.has_value()) {
-                        auto delay = us(now() - polled.value());
+                    if (!std::holds_alternative<Cisq::Err>(polled)) {   
+                        auto delay = us(now() - std::get<0>(polled));
                         read_delay.push_back(delay);
                     } else {
                         std::cerr << "Failed to read from pipe" << std::endl;
@@ -748,11 +751,11 @@ namespace sysfail {
         s.remove();
 
         std::stringstream ss;
-        ss << "Read without delay: " << read_tm_without_delay << std::endl;
-        ss << "Read with delay: " << read_tm_with_delay << std::endl;
-
-        ss << "Write without delay: " << write_tm_without_delay << std::endl;
-        ss << "Write with delay: " << write_tm_with_delay << std::endl;
+//        ss << "Read without delay: " << read_tm_without_delay << std::endl;
+//        ss << "Read with delay: " << read_tm_with_delay << std::endl;
+//
+//        ss << "Write without delay: " << write_tm_without_delay << std::endl;
+//        ss << "Write with delay: " << write_tm_with_delay << std::endl;
 
         return {
             {
@@ -789,16 +792,14 @@ namespace sysfail {
     }
 
     template <typename T, typename E> void assertValue(
-        const std::expected<T, E> &e,
+        const std::variant<T, E> &e,
         const T &v,
         const char* file,
         int line
     ) {
         ScopedTrace t(file, line, "");
-        EXPECT_TRUE(e.has_value());
-        if (e.has_value()) {
-            EXPECT_EQ(e.value(), v);
-        }
+        EXPECT_FALSE(std::holds_alternative<E>(e));
+        EXPECT_EQ(std::get<0>(e), v);
     }
 
     #define ASSERT_VALUE(e, v) assertValue(e, v, __FILE__, __LINE__)
@@ -815,8 +816,8 @@ namespace sysfail {
         });
 
         {
-            EXPECT_TRUE(p1.write(10).has_value());
-            EXPECT_TRUE(p2.write(20).has_value());
+            EXPECT_FALSE(std::holds_alternative<Cisq::Err>(p1.write(10)));
+            EXPECT_FALSE(std::holds_alternative<Cisq::Err>(p2.write(20)));
             ASSERT_VALUE(p1.read(), 10);
             ASSERT_VALUE(p2.read(), 20);
         }
@@ -827,11 +828,11 @@ namespace sysfail {
                 [](pid_t tid) { return true; },
                 thread_discovery::None{});
             Session s(p);
-            EXPECT_FALSE(p1.write(30).has_value());
-            EXPECT_TRUE(p2.write(40).has_value());
+            EXPECT_TRUE(std::holds_alternative<Cisq::Err>(p1.write(30)));
+            EXPECT_FALSE(std::holds_alternative<Cisq::Err>(p2.write(40)));
         }
 
-        EXPECT_TRUE(p1.write(50).has_value());
+        EXPECT_FALSE(std::holds_alternative<Cisq::Err>(p1.write(40)));
 
         {
             sysfail::Plan p(
@@ -839,7 +840,7 @@ namespace sysfail {
                 [](pid_t tid) { return true; },
                 thread_discovery::None{});
             Session s(p);
-            EXPECT_FALSE(p1.read().has_value());
+            EXPECT_TRUE(std::holds_alternative<Cisq::Err>(p1.read()));
             ASSERT_VALUE(p2.read(), 40);
         }
     }
